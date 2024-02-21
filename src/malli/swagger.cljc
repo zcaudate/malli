@@ -103,10 +103,10 @@
    (into
     (or (:responses acc) {})
     (for [[status response] v]
-      [status (-> response
-                  (update :schema transform {:type :schema})
-                  (update :description (fnil identity ""))
-                  -remove-empty-keys)]))})
+      [status (cond-> response
+                (:schema response) (update :schema transform {:type :schema})
+                true (update :description (fnil identity ""))
+                true -remove-empty-keys)]))})
 
 (defmethod expand ::parameters [_ v acc _]
   (let [old (or (:parameters acc) [])
@@ -125,6 +125,24 @@
                     vec)]
     {:parameters merged}))
 
+(defn dissoc-non-root-definitions
+  [{:keys [parameters responses] :as x}]
+  (cond-> x
+    parameters (update :parameters
+                       #(mapv (fn [p]
+                                (if (contains? p :schema)
+                                  (update p :schema dissoc :definitions)
+                                  p))
+                              %))
+    responses (update :responses
+                      #(reduce-kv (fn [rs k v]
+                                    (assoc rs k
+                                           (if (contains? v :schema)
+                                             (update v :schema
+                                                     dissoc :definitions)
+                                             v)))
+                                  {} %))))
+
 (defn expand-qualified-keywords
   [x options]
   (let [accept? (-> expand methods keys set)]
@@ -141,7 +159,9 @@
                                   (-> parameters first :schema :definitions)
                                   (->> responses vals (map :schema)
                                        (map :definitions) (apply merge)))]
-                (-> acc (dissoc k) (merge expanded) (update :definitions merge definitions)))
+                (-> acc (dissoc k) (merge expanded)
+                    (update :definitions merge definitions)
+                    dissoc-non-root-definitions))
               acc))
           x x)
          x))

@@ -6,6 +6,7 @@
   #?(:clj (:import (java.time Instant ZoneId)
                    (java.time.format DateTimeFormatter DateTimeFormatterBuilder)
                    (java.time.temporal ChronoField)
+                   (java.net URI)
                    (java.util Date UUID))))
 
 (def ^:dynamic *max-compile-depth* 10)
@@ -68,9 +69,7 @@
 
 (defn -string->double [x]
   (if (string? x)
-    (try #?(:clj  (Double/parseDouble x)
-            :cljs (let [x' (js/parseFloat x)] (if (js/isNaN x') x x')))
-         (catch #?(:clj Exception, :cljs js/Error) _ x))
+    (or (parse-double x) x)
     x))
 
 (defn -number->double [x]
@@ -87,7 +86,7 @@
     x))
 
 (def ^:private uuid-re
-  #"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+  #"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 (defn -string->uuid [x]
   (if (string? x)
@@ -96,6 +95,17 @@
          :cljs (uuid x))
       x)
     x))
+
+#?(:clj
+   (defn -string->uri [x]
+     (if (string? x)
+       (try
+         (URI. x)
+         ;; TODO replace with URISyntaxException once we are on
+         ;; babashka >= v1.3.186.
+         (catch Exception _
+           x))
+       x)))
 
 #?(:clj
    (def ^DateTimeFormatter +string->date-format+
@@ -191,11 +201,17 @@
         (set? x) (seq x)
         :else x))
 
-(defn -infer-child-decoder-compiler [schema _]
-  (-> schema (m/children) (m/-infer) {:keyword -string->keyword
-                                      :symbol -string->symbol
-                                      :int -string->long
-                                      :double -string->double}))
+(defn -infer-child-compiler [method]
+  (fn [schema _]
+    (some-> schema
+            (m/children)
+            (m/-infer)
+            {:keyword {:decode -string->keyword
+                       :encode m/-keyword->string}
+             :symbol {:decode -string->symbol}
+             :int {:decode -string->long}
+             :double {:decode -string->double}}
+            (method -any->string))))
 
 ;;
 ;; decoders
@@ -217,9 +233,10 @@
    'uuid? -string->uuid
    'double? -number->double
    'inst? -string->date
+   #?@(:clj ['uri? -string->uri])
 
-   :enum {:compile -infer-child-decoder-compiler}
-   := {:compile -infer-child-decoder-compiler}
+   :enum {:compile (-infer-child-compiler :decode)}
+   := {:compile (-infer-child-compiler :decode)}
 
    :double -number->double
    :keyword -string->keyword
@@ -227,6 +244,7 @@
    :qualified-keyword -string->keyword
    :qualified-symbol -string->symbol
    :uuid -string->uuid
+   ;#?@(:clj [:uri -string->uri])
 
    :set -sequential->set})
 
@@ -240,13 +258,17 @@
    'qualified-symbol? -any->string
 
    'uuid? -any->string
+   #?@(:clj ['uri? -any->string])
+
+   :enum {:compile (-infer-child-compiler :encode)}
+   := {:compile (-infer-child-compiler :encode)}
 
    :keyword m/-keyword->string
    :symbol -any->string
    :qualified-keyword m/-keyword->string
    :qualified-symbol -any->string
    :uuid -any->string
-   ;:uri any->string
+   ;#?@(:clj [:uri -any->string])
    ;:bigdec any->string
 
    'inst? -date->string
@@ -303,7 +325,6 @@
     :>= -any->string
     :< -any->string
     :<= -any->string
-    := -any->string
     :not= -any->string
 
     'double -any->string}))
@@ -375,16 +396,18 @@
                                                    (if (and (map? x) (not default-schema))
                                                      (reduce-kv (fn [acc k _] (if-not (ks k) (dissoc acc k) acc)) x x)
                                                      x))))))}
-         strip-map-of {:compile (fn [schema options]
-                                  (let [entry-schema (m/into-schema :tuple nil (m/children schema) options)
-                                        valid? (m/validator entry-schema options)]
-                                    {:leave (fn [x] (reduce (fn [acc entry]
+         strip-map-of (fn [stage]
+                        {:compile (fn [schema options]
+                                    (let [entry-schema (m/into-schema :tuple nil (m/children schema) options)
+                                          valid?       (m/validator entry-schema options)]
+                                      {stage (fn [x]
+                                              (reduce (fn [acc entry]
                                                               (if (valid? entry)
                                                                 (apply assoc acc entry)
-                                                                acc)) (empty x) x))}))}]
+                                                                acc)) (empty x) x))}))})]
      (transformer
-      {:decoders {:map strip-map, :map-of strip-map-of}
-       :encoders {:map strip-map, :map-of strip-map-of}}))))
+       {:decoders {:map strip-map, :map-of (strip-map-of :leave)}
+        :encoders {:map strip-map, :map-of (strip-map-of :enter)}}))))
 
 (defn key-transformer [{:keys [decode encode types] :or {types #{:map}}}]
   (let [transform (fn [f stage] (when f {stage (-transform-map-keys f)}))]
@@ -397,9 +420,10 @@
   ([] (default-value-transformer nil))
   ([{:keys [key default-fn defaults ::add-optional-keys] :or {key :default, default-fn (fn [_ x] x)}}]
    (let [get-default (fn [schema]
-                       (if-some [e (some-> schema m/properties (find key))]
-                         (constantly (val e))
-                         (some->> schema m/type (get defaults) (#(constantly (% schema))))))
+                       (or (some-> schema m/properties :default/fn m/eval)
+                           (if-some [e (some-> schema m/properties (find key))]
+                             (constantly (val e))
+                             (some->> schema m/type (get defaults) (#(constantly (% schema)))))))
          set-default {:compile (fn [schema _]
                                  (when-some [f (get-default schema)]
                                    (fn [x] (if (nil? x) (default-fn schema (f)) x))))}

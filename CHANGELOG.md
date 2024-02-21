@@ -14,6 +14,81 @@ We use [Break Versioning][breakver]. The version numbers follow a `<major>.<mino
 
 Malli is in well matured [alpha](README.md#alpha).
 
+## Unreleased
+
+* `:=>` takes optional 3rd child, the guard schema validating vector of arguments and return value `[args ret]`. See [Function Guards](docs/function-schemas.md#function-guards) for more details. Fixes [#764](https://github.com/metosin/malli/issues/764) and [#764](https://github.com/metosin/malli/issues/764).
+
+```clojure
+;; function of arg:int -> ret:int, where arg < ret
+[:=> 
+ [:cat :int] 
+ :int 
+ [:fn (fn [[[arg] ret]] (< arg ret))]]
+```
+
+* **BREAKING**: `malli.generator/function-checker` returns explanations under new keys:
+  * `::mg/explain-input` -> `::m/explain-input`
+  * `::mg/explain-output` -> `::m/explain-output`
+  * new `::m/explain-guard` to return guard explanation, if any
+* `m/explain` for `:=>` returns also errors for args, return and guard if they exist
+
+## 0.14.0 (2024-01-16)
+
+* Better development-time tooling
+  * `malli.dev/start!` captures all malli-thrown exceptions, see [README](README.md#development-mode) for details
+  * does not log individual re-instrumentation of function vars
+  * **BREAKING**: changes in `malli.dev.virhe` and `malli.pretty` extension apis, wee [#980](https://github.com/metosin/malli/pull/980) for details
+* New `m/deref-recursive` to recursive deref all schemas (not `:ref`s)
+* FIX: Malli generates incorrect clj-kondo spec for :fn schemas [#836](https://github.com/metosin/malli/issues/836) via [#987](https://github.com/metosin/malli/pull/987)
+* Support for Var references [#985](https://github.com/metosin/malli/pull/985), see [guide](README.md#var-registry) for details.
+* **BREAKING**: `m/coerce` and `m/coercer` throw `::m/coercion` instead of `::m/invalid-input`
+* New Guide for [Reusable Schemas](docs/reusable-schemas.md)
+* Less printing of Var instumentation 
+* **BREAKING**: qualified symbols are valid reference types [#984](https://github.com/metosin/malli/pull/984) 
+* Fixing `mt/strip-extra-keys-transformer` for recursive map encoding [#963](https://github.com/metosin/malli/pull/963)
+* Support passing custom `:type` in into-schema opt for `:map` and `:map-of` [#968](https://github.com/metosin/malli/pull/968)
+* `mu/path->in` works with `:orn`, `:catn` and `:altn`.
+
+## 0.13.0 (2023-09-24)
+
+* **BREAKING** Fallback to use result of first branch when decoding `:or` and `:orn`, [#946](https://github.com/metosin/malli/pull/946) 
+* **BREAKING**: `decode` for `:double` and `double?` in cljs doesn't allow trailing garbage any more [#942](https://github.com/metosin/malli/pull/942)
+* Faster generators for `:map`, [#948](https://github.com/metosin/malli/pull/948) & [#949](https://github.com/metosin/malli/pull/949)
+* FIX: `:altn` can't handle just one child entry when nested in sequence schema [#945](https://github.com/metosin/malli/pull/945)
+* Officially drop Clojure 1.10 support. Tests haven't passed for some time with Clojure 1.10, but this was not noticed due to a faulty CI setup.
+* Use type inferrer when encoding enums [#951](https://github.com/metosin/malli/pull/951) 
+* Use `bound-fn` in `malli.dev/start!` to preserve `*out*` [#954](https://github.com/metosin/malli/pull/954)
+* FIX: Malli generates invalid clj-kondo type spec for [:map [:keys [:+ :keyword]]] [#952](https://github.com/metosin/malli/pull/952)
+* FIX: `malli.experimental.describe` descriptions of `:min` and `:max` are backwards [#959](https://github.com/metosin/malli/pull/959)
+* FIX: Malli tuple should generate clj-kondo seqable [#962](https://github.com/metosin/malli/pull/962)
+
+## 0.12.0 (2023-08-31)
+
+* FIX: retain order with `:catn` unparse, fixes [#925](https://github.com/metosin/malli/issues/925)
+* **BREAKING**: Do not require timezone data directly for cljs [#898](https://github.com/metosin/malli/pull/898) with `malli.experimental.time`
+* Remove non-root swagger definitions [#900](https://github.com/metosin/malli/pull/900)
+* FIX: `malli.core/-comp` keeps interceptor order with long chains [#905](https://github.com/metosin/malli/pull/905)
+* FIX: `malli.dev/start!` exception does not contain source [#896](https://github.com/metosin/malli/issues/896)
+* FIX: don't add extra :schema nil to swagger :parameters [#939](https://github.com/metosin/malli/pull/939)
+* Add `:gen/return` support in malli.generator [#933](https://github.com/metosin/malli/pull/933)
+* Make uuid transformer to be case insensitive [#929](https://github.com/metosin/malli/pull/929)
+* Add `:default/fn` prop for default-value-transformer [#927](https://github.com/metosin/malli/pull/927)
+* Updated dependencies:
+
+```clojure
+borkdude/edamame 1.3.20 -> 1.3.23
+```
+
+## 0.11.0 (2023-04-12)
+
+* BREAKING: remove map syntax: `mu/from-map-syntax`, `mu/to-map-syntax`. Note that AST syntax and lite syntax remain unchanged.
+* BREAKING: walking a `:schema` with an `id` no longer passes `[id]` instead of `children` to the walker function [#884](https://github.com/metosin/malli/issues/884)
+* Support converting recursive malli schemas to json-schema [#464](https://github.com/metosin/malli/issues/464) [#868](https://github.com/metosin/malli/issues/868)
+* Add cherry as alternative CLJS evaluator [#888](https://github.com/metosin/malli/pull/888)
+* Replace `goog/mixin` with `Object.assign` [#890](https://github.com/metosin/malli/pull/890)
+* Simplify uuid regex for accept non-standard and zero uuids [#889](https://github.com/metosin/malli/pull/889)
+* Fix clj-doc API import [#887](https://github.com/metosin/malli/pull/887)
+
 ## 0.10.4 (2023-03-19)
 
 * FIX `malli.swagger` ns, broken test on reitit.
@@ -41,6 +116,16 @@ Malli is in well matured [alpha](README.md#alpha).
  {1 1, 2 "2", "3" 3, "4" "4"}
  (mt/strip-extra-keys-transformer))
 ; => {1 1}
+```
+
+* **BREAKING** (post-note 16.8.2023, this should have been a MINOR version bump). `mt/strip-extra-keys-transformer` strips non-defined keys of implicitely open `:map`:
+
+```clojure
+(m/decode
+ [:map [:x :int]]
+ {:x 1, :y 2, :z 3}
+ (mt/strip-extra-keys-transformer))
+; => {:x 1}
 ```
 
 * `m/default-schema` to pull the `::m/default` schema from entry schemas

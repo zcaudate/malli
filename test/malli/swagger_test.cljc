@@ -36,22 +36,22 @@
              :decode/string '(fn [x] (update x :type keyword))}
      [:sized [:map [:type keyword?] [:size int?]]]
      [:human [:map [:type keyword?] [:name string?] [:address [:map [:country keyword?]]]]]]
-    {:type "object",
+    {:type "object"
      :properties {:type {:type "string"}
                   :size {:type "integer"
-                         :format "int64"}},
-     :required [:type :size],
-     :x-anyOf [{:type "object",
+                         :format "int64"}}
+     :required [:type :size]
+     :x-anyOf [{:type "object"
                 :properties {:type {:type "string"}
                              :size {:type "integer"
-                                    :format "int64"}},
+                                    :format "int64"}}
                 :required [:type :size]}
-               {:type "object",
-                :properties {:type {:type "string"},
-                             :name {:type "string"},
+               {:type "object"
+                :properties {:type {:type "string"}
+                             :name {:type "string"}
                              :address {:type "object"
                                        :properties {:country {:type "string"}}
-                                       :required [:country]}},
+                                       :required [:country]}}
                 :required [:type :name :address]}]}]
    [[:map-of string? string?] {:type "object"
                                :additionalProperties {:type "string"}}]
@@ -115,12 +115,12 @@
                    :json-schema {:type "file2"}} [:file any?]]))))
 
   (testing "map-entry overrides"
-    (is (= {:type "object",
-            :properties {:x1 {:title "x", :type "string"},
-                         :x2 {:title "x"},
-                         :x3 {:title "x", :type "string", :default "x"},
-                         :x4 {:title "x-string", :default "x2"},
-                         :x5 {:type "x-string"}},
+    (is (= {:type "object"
+            :properties {:x1 {:title "x", :type "string"}
+                         :x2 {:title "x"}
+                         :x3 {:title "x", :type "string", :default "x"}
+                         :x4 {:title "x-string", :default "x2"}
+                         :x5 {:type "x-string"}}
             :required [:x1 :x2 :x3 :x4 :x5]}
            (swagger/transform
             [:map
@@ -180,11 +180,11 @@
   (let [registry (merge (m/default-schemas) (mu/schemas))]
 
     (testing "merge"
-      (is (= {:title "merge",
-              :type "object",
-              :properties {:x {:type "integer", :format "int64", :example 42},
-                           :y {:type "integer", :format "int64"},
-                           :z {:type "integer", :format "int64"}},
+      (is (= {:title "merge"
+              :type "object"
+              :properties {:x {:type "integer", :format "int64", :example 42}
+                           :y {:type "integer", :format "int64"}
+                           :z {:type "integer", :format "int64"}}
               :required [:x :y :z]}
              (swagger/transform
               [:merge {:title "merge"}
@@ -193,14 +193,14 @@
               {:registry registry}))))
 
     (testing "union"
-      (is (= {:title "union",
-              :type "object",
+      (is (= {:title "union"
+              :type "object"
               :properties {:x {:format "int64"
                                :type "integer"
                                :x-anyOf [{:format "int64"
                                           :type "integer"}
                                          {:type "string"}]}
-                           :y {:type "integer", :format "int64"}},
+                           :y {:type "integer", :format "int64"}}
               :required [:x :y]}
              (swagger/transform
               [:union {:title "union"}
@@ -220,39 +220,39 @@
               {:registry registry}))))))
 
 (deftest references-test
-  (is (= {:$ref "#/definitions/Order",
-          :definitions {"Country" {:type "object",
+  (is (= {:$ref "#/definitions/Order"
+          :definitions {"Country" {:type "object"
                                    :properties {:name {:type "string"
-                                                       :enum [:FI :PO]},
+                                                       :enum [:FI :PO]}
                                                 :neighbors {:type "array"
-                                                            :items {:$ref "#/definitions/Country"}}},
-                                   :required [:name :neighbors]},
-                        "Burger" {:type "object",
-                                  :properties {:name {:type "string"},
-                                               :description {:type "string"},
-                                               :origin {:$ref "#/definitions/Country",
-                                                        :x-nullable true},
+                                                            :items {:$ref "#/definitions/Country"}}}
+                                   :required [:name :neighbors]}
+                        "Burger" {:type "object"
+                                  :properties {:name {:type "string"}
+                                               :description {:type "string"}
+                                               :origin {:$ref "#/definitions/Country"
+                                                        :x-nullable true}
                                                :price {:type "integer"
                                                        :format "int64"
-                                                       :minimum 1}},
-                                  :required [:name :origin :price]},
-                        "OrderLine" {:type "object",
-                                     :properties {:burger {:$ref "#/definitions/Burger"},
+                                                       :minimum 1}}
+                                  :required [:name :origin :price]}
+                        "OrderLine" {:type "object"
+                                     :properties {:burger {:$ref "#/definitions/Burger"}
                                                   :amount {:type "integer"
-                                                           :format "int64"}},
-                                     :required [:burger :amount]},
-                        "Order" {:type "object",
+                                                           :format "int64"}}
+                                     :required [:burger :amount]}
+                        "Order" {:type "object"
                                  :properties {:lines {:type "array"
-                                                      :items {:$ref "#/definitions/OrderLine"}},
-                                              :delivery {:type "object",
-                                                         :properties {:delivered {:type "boolean"},
-                                                                      :address {:type "object",
-                                                                                :properties {:street {:type "string"},
-                                                                                             :zip {:type "integer",
-                                                                                                   :format "int64"},
-                                                                                             :country {:$ref "#/definitions/Country"}},
-                                                                                :required [:street :zip :country]}},
-                                                         :required [:delivered :address]}},
+                                                      :items {:$ref "#/definitions/OrderLine"}}
+                                              :delivery {:type "object"
+                                                         :properties {:delivered {:type "boolean"}
+                                                                      :address {:type "object"
+                                                                                :properties {:street {:type "string"}
+                                                                                             :zip {:type "integer"
+                                                                                                   :format "int64"}
+                                                                                             :country {:$ref "#/definitions/Country"}}
+                                                                                :required [:street :zip :country]}}
+                                                         :required [:delivered :address]}}
                                  :required [:lines :delivery]}}}
          (swagger/transform
           [:schema
@@ -279,30 +279,46 @@
 
 (deftest swagger-spec-test
   (testing "generates swagger for ::parameters and ::responses w/ basic schema"
-    (is (= {:definitions nil,
-            :parameters [{:description "",
-                          :in "body",
-                          :name "body",
-                          :required true,
+    (is (= {:definitions nil
+            :parameters [{:description ""
+                          :in "body"
+                          :name "body"
+                          :required true
                           :schema {:properties {:foo {:type "string"}}
-                                   :required [:foo], :type "object"}}],
-            :responses {200 {:description "",
+                                   :required [:foo] :type "object"}}
+                         {:description ""
+                          :in "query"
+                          :name :a
+                          :required true
+                          :type "string"}
+                         {:description ""
+                          :in "query"
+                          :name :b
+                          :required true
+                          :type "string"}
+                         {:description ""
+                          :in "header"
+                          :name :c
+                          :required true
+                          :type "string"}]
+            :responses {200 {:description ""
                              :schema {:properties {:bar {:type "string"}}
                                       :required [:bar], :type "object"}}}}
            (swagger/swagger-spec {::swagger/parameters
-                                  {:body [:map [:foo :string]]}
+                                  {:body [:map [:foo :string]]
+                                   :query [:map [:a :string] [:b :string]]
+                                   :header [:map [:c :string]]}
                                   ::swagger/responses
                                   {200 {:schema [:map [:bar :keyword]]}}}))))
   (testing "generates swagger for ::parameters w/ basic schema + registry"
     (let [registry (merge (m/type-schemas)
                           {::body [:string {:min 1}]})]
-      (is (= {:definitions {::body {:minLength 1, :type "string"}},
-              :parameters [{:description "",
-                            :in "body",
-                            :name "body",
-                            :required true,
-                            :schema {:$ref "#/definitions/malli.swagger-test~1body",
-                                     :definitions {::body {:minLength 1, :type "string"}}}}]}
+      (is (= {:definitions {"malli.swagger-test/body" {:minLength 1, :type "string"}}
+              :parameters [{:description ""
+                            :in "body"
+                            :name "body"
+                            :required true
+                            :schema {:$ref "#/definitions/malli.swagger-test~1body"}}]}
              (swagger/swagger-spec {::swagger/parameters
                                     {:body (m/schema ::body
                                                      {:registry registry})}})))))
@@ -311,16 +327,13 @@
     (let [registry (merge (m/base-schemas) (m/type-schemas)
                           {::success [:map-of :keyword :string]
                            ::error [:string {:min 1}]})]
-      (is (= {:definitions {::error {:minLength 1, :type "string"},
-                            ::success {:additionalProperties {:type "string"},
-                                       :type "object"}},
-              :responses {200 {:description "",
-                               :schema {:$ref "#/definitions/malli.swagger-test~1success",
-                                        :definitions {::success {:additionalProperties {:type "string"},
-                                                                 :type "object"}}}},
-                          400 {:description "",
-                               :schema {:$ref "#/definitions/malli.swagger-test~1error",
-                                        :definitions {::error {:minLength 1, :type "string"}}}}}}
+      (is (= {:definitions {"malli.swagger-test/error" {:minLength 1, :type "string"}
+                            "malli.swagger-test/success" {:additionalProperties {:type "string"}
+                                                          :type "object"}}
+              :responses {200 {:description ""
+                               :schema {:$ref "#/definitions/malli.swagger-test~1success"}}
+                          400 {:description ""
+                               :schema {:$ref "#/definitions/malli.swagger-test~1error"}}}}
              (swagger/swagger-spec {::swagger/responses
                                     {200 {:schema (m/schema ::success
                                                             {:registry registry})}
@@ -332,27 +345,20 @@
                           {::req-body [:map-of :keyword :any]
                            ::success-resp [:map [:it [:= "worked"]]]
                            ::error-resp [:string {:min 1}]})]
-      (is (= {:definitions {::error-resp {:minLength 1, :type "string"},
-                            ::req-body {:additionalProperties {}, :type "object"},
-                            ::success-resp {:properties {:it {:const "worked"}},
-                                            :required [:it],
-                                            :type "object"}},
-              :parameters [{:description "",
-                            :in "body",
-                            :name "body",
-                            :required true,
-                            :schema {:$ref "#/definitions/malli.swagger-test~1req-body",
-                                     :definitions {::req-body {:additionalProperties {},
-                                                               :type "object"}}}}],
-              :responses {200 {:description "",
-                               :schema {:$ref "#/definitions/malli.swagger-test~1success-resp",
-                                        :definitions {::success-resp {:properties {:it {:const "worked"}},
-                                                                      :required [:it],
-                                                                      :type "object"}}}},
-                          400 {:description "",
-                               :schema {:$ref "#/definitions/malli.swagger-test~1error-resp",
-                                        :definitions {::error-resp {:minLength 1,
-                                                                    :type "string"}}}}}}
+      (is (= {:definitions {"malli.swagger-test/error-resp" {:minLength 1, :type "string"}
+                            "malli.swagger-test/req-body" {:additionalProperties {}, :type "object"}
+                            "malli.swagger-test/success-resp" {:properties {:it {:const "worked"}}
+                                                               :required [:it]
+                                                               :type "object"}}
+              :parameters [{:description ""
+                            :in "body"
+                            :name "body"
+                            :required true
+                            :schema {:$ref "#/definitions/malli.swagger-test~1req-body"}}]
+              :responses {200 {:description ""
+                               :schema {:$ref "#/definitions/malli.swagger-test~1success-resp"}}
+                          400 {:description ""
+                               :schema {:$ref "#/definitions/malli.swagger-test~1error-resp"}}}}
              (swagger/swagger-spec {::swagger/parameters
                                     {:body (m/schema ::req-body
                                                      {:registry registry})}
@@ -362,71 +368,58 @@
                                      400 {:schema (m/schema ::error-resp
                                                             {:registry registry})}}})))))
 
-  ;; This test currently fails due to https://github.com/metosin/malli/issues/464
-  ;; TODO: Uncomment it when #464 is fixed
-  #_(testing "generates swagger for ::parameters and ::responses w/ recursive schema + registry"
-      (let [registry (merge (m/base-schemas) (m/type-schemas)
-                            (m/comparator-schemas) (m/sequence-schemas)
-                            {::a [:or
-                                  :string
-                                  [:ref ::b]]
-                             ::b [:or
-                                  :keyword
-                                  [:ref ::c]]
-                             ::c [:or
-                                  :symbol
-                                  [:ref ::a]]
-                             ;; test would pass if the schema below were e.g.
-                             ;; [:map [:a ::a] [:b ::b] [:c ::c]] (and the
-                             ;; ::req-body expected adjusted accordingly)
-                             ;; b/c then ::b & ::c would be directly used, not just refs
-                             ::req-body [:map [:a ::a]]
-                             ::success-resp [:map-of :keyword :string]
-                             ::error-resp :string})]
-        (is (= {:definitions {::a {:type "string",
-                                   :x-anyOf [{:type "string"}
-                                             {:$ref "#/definitions/malli.swagger-test~1b"}]},
-                              ::b {:type "string"
-                                   :x-anyOf [{:type "string"}
-                                             {:$ref "#/definitions/malli.swagger-test~1c"}]}
-                              ::c {:type "string"
-                                   :x-anyOf [{:type "string"}
-                                             {:$ref "#/definitions/malli.swagger-test~1a"}]}
-                              ::error-resp {:type "string"},
-                              ::req-body {:properties {:a {:$ref "#/definitions/malli.swagger-test~1a"}},
-                                          :required [:a],
-                                          :type "object"},
-                              ::success-resp {:additionalProperties {:type "string"},
-                                              :type "object"}},
-                :parameters [{:description "",
-                              :in "body",
-                              :name "body",
-                              :required true,
-                              :schema {:$ref "#/definitions/malli.swagger-test~1req-body",
-                                       :definitions {::a {:type "string",
-                                                          :x-anyOf [{:type "string"}
-                                                                    {:$ref "#/definitions/malli.swagger-test~1b"}]},
-                                                     ::b {:type "string"
-                                                          :x-anyOf [{:type "string"}
-                                                                    {:$ref "#/definitions/malli.swagger-test~1c"}]}
-                                                     ::c {:type "string"
-                                                          :x-anyOf [{:type "string"}
-                                                                    {:$ref "#/definitions/malli.swagger-test~1a"}]}
-                                                     ::req-body {:properties {:a {:$ref "#/definitions/malli.swagger-test~1a"}},
-                                                                 :required [:a],
-                                                                 :type "object"}}}}],
-                :responses {200 {:description "",
-                                 :schema {:$ref "#/definitions/malli.swagger-test~1success-resp",
-                                          :definitions {:malli.swagger-test/success-resp {:additionalProperties {:type "string"},
-                                                                                          :type "object"}}}},
-                            400 {:description "",
-                                 :schema {:$ref "#/definitions/malli.swagger-test~1error-resp",
-                                          :definitions {:malli.swagger-test/error-resp {:type "string"}}}}}}
-               (swagger/swagger-spec {::swagger/parameters
-                                      {:body (m/schema ::req-body
-                                                       {:registry registry})}
-                                      ::swagger/responses
-                                      {200 {:schema (m/schema ::success-resp
-                                                              {:registry registry})}
-                                       400 {:schema (m/schema ::error-resp
-                                                              {:registry registry})}}}))))))
+  (testing "no schema in responses ignored"
+    (is (= {:definitions nil
+            :responses {200 {:description "" :schema {:type "string"}}
+                        500 {:description "fail"}}}
+           (swagger/swagger-spec {::swagger/responses
+                                  {500 {:description "fail"}
+                                   200 {:schema [:string]}}}))))
+
+  (testing "generates swagger for ::parameters and ::responses w/ recursive schema + registry"
+    (let [registry (merge (m/base-schemas) (m/type-schemas)
+                          (m/comparator-schemas) (m/sequence-schemas)
+                          {::a [:or
+                                :string
+                                [:ref ::b]]
+                           ::b [:or
+                                :keyword
+                                [:ref ::c]]
+                           ::c [:or
+                                :symbol
+                                [:ref ::a]]
+                           ::req-body [:map [:a ::a]]
+                           ::success-resp [:map-of :keyword :string]
+                           ::error-resp :string})]
+      (is (= {:definitions {"malli.swagger-test/a" {:type "string"
+                                                    :x-anyOf [{:type "string"}
+                                                              {:$ref "#/definitions/malli.swagger-test~1b"}]}
+                            "malli.swagger-test/b" {:type "string"
+                                                    :x-anyOf [{:type "string"}
+                                                              {:$ref "#/definitions/malli.swagger-test~1c"}]}
+                            "malli.swagger-test/c" {:type "string"
+                                                    :x-anyOf [{:type "string"}
+                                                              {:$ref "#/definitions/malli.swagger-test~1a"}]}
+                            "malli.swagger-test/error-resp" {:type "string"}
+                            "malli.swagger-test/req-body" {:properties {:a {:$ref "#/definitions/malli.swagger-test~1a"}}
+                                                           :required [:a]
+                                                           :type "object"}
+                            "malli.swagger-test/success-resp" {:additionalProperties {:type "string"}
+                                                               :type "object"}}
+              :parameters [{:description ""
+                            :in "body"
+                            :name "body"
+                            :required true
+                            :schema {:$ref "#/definitions/malli.swagger-test~1req-body"}}]
+              :responses {200 {:description ""
+                               :schema {:$ref "#/definitions/malli.swagger-test~1success-resp"}}
+                          400 {:description ""
+                               :schema {:$ref "#/definitions/malli.swagger-test~1error-resp"}}}}
+             (swagger/swagger-spec {::swagger/parameters
+                                    {:body (m/schema ::req-body
+                                                     {:registry registry})}
+                                    ::swagger/responses
+                                    {200 {:schema (m/schema ::success-resp
+                                                            {:registry registry})}
+                                     400 {:schema (m/schema ::error-resp
+                                                            {:registry registry})}}}))))))

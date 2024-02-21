@@ -4,6 +4,7 @@
             [malli.core :as m]
             [malli.core-test]
             [malli.json-schema :as json-schema]
+            [malli.registry :as mr]
             [malli.util :as mu]))
 
 (def expectations
@@ -287,11 +288,34 @@
                                                          [:zip int?]
                                                          [:country "Country"]]]]]]}}
              "Order"]))))
-
   (testing "circular definitions are not created"
     (is (= {:$ref "#/definitions/Foo", :definitions {"Foo" {:type "integer"}}}
            (json-schema/transform
-             (mu/closed-schema [:schema {:registry {"Foo" :int}} "Foo"]))))))
+            [:schema {:registry {"Foo" :int}} "Foo"]))))
+  (testing "circular definitions are not created for closed schemas"
+    (is (= {:$ref "#/definitions/Foo", :definitions {"Foo" {:type "integer"}}}
+           (json-schema/transform
+            (mu/closed-schema [:schema {:registry {"Foo" :int}} "Foo"]))))))
+
+(deftest mutual-recursion-test
+  (is (= {:$ref "#/definitions/Foo"
+          :definitions {"Bar" {:$ref "#/definitions/Foo"}
+                        "Foo" {:items {:$ref "#/definitions/Bar"} :type "array"}}}
+         (json-schema/transform [:schema {:registry {"Foo" [:vector [:schema "Bar"]] ;; NB! :schema instead of :ref
+                                                     "Bar" [:ref "Foo"]}}
+                                 "Foo"])))
+  (is (= {:$ref "#/definitions/Foo"
+          :definitions {"Bar" {:$ref "#/definitions/Foo"}
+                        "Foo" {:items {:$ref "#/definitions/Bar"} :type "array"}}}
+         (json-schema/transform [:schema {:registry {"Foo" [:vector [:ref "Bar"]]
+                                                     "Bar" [:ref "Foo"]}}
+                                 "Foo"])))
+  (is (= {:$ref "#/definitions/Bar",
+          :definitions {"Bar" {:$ref "#/definitions/Foo"},
+                        "Foo" {:items {:$ref "#/definitions/Bar"}, :type "array"}}}
+         (json-schema/transform [:schema {:registry {"Foo" [:vector [:ref "Bar"]]
+                                                     "Bar" [:ref "Foo"]}}
+                                 "Bar"]))))
 
 (deftest function-schema-test
   (is (= {} (json-schema/transform [:=> [:cat int? int?] int?]))))
@@ -302,3 +326,36 @@
           :required [:name]
           :additionalProperties false}
          (json-schema/transform [:map {:closed true} [:name :string]]))))
+
+(def UserId :string)
+
+(def User
+  [:map {:registry {::location [:tuple :double :double]
+                    `description :string}}
+   [:id #'UserId]
+   ::location
+   `description
+   [:friends {:optional true} [:set [:ref #'User]]]])
+
+(deftest ref-test
+  (is (= {:type "object"
+          :properties {:id {:$ref "#/definitions/malli.json-schema-test~1UserId"},
+                       ::location {:$ref "#/definitions/malli.json-schema-test~1location"},
+                       `description {:$ref "#/definitions/malli.json-schema-test~1description"},
+                       :friends {:type "array", :items {:$ref "#/definitions/malli.json-schema-test~1User"}, :uniqueItems true}},
+          :required [:id :malli.json-schema-test/location `description],
+          :definitions {"malli.json-schema-test/UserId" {:type "string"},
+                        "malli.json-schema-test/location" {:type "array",
+                                                           :items [{:type "number"} {:type "number"}],
+                                                           :additionalItems false},
+                        "malli.json-schema-test/description" {:type "string"},
+                        "malli.json-schema-test/User" {:type "object",
+                                                       :properties {:id {:$ref "#/definitions/malli.json-schema-test~1UserId"},
+                                                                    ::location {:$ref "#/definitions/malli.json-schema-test~1location"},
+                                                                    `description {:$ref "#/definitions/malli.json-schema-test~1description"},
+                                                                    :friends {:type "array",
+                                                                              :items {:$ref "#/definitions/malli.json-schema-test~1User"},
+                                                                              :uniqueItems true}},
+                                                       :required [:id ::location `description]}}}
+
+         (json-schema/transform User))))

@@ -1,5 +1,6 @@
 (ns malli.json-schema
   (:require [clojure.set :as set]
+            [clojure.string :as str]
             [malli.core :as m]))
 
 (declare -transform)
@@ -7,24 +8,23 @@
 (defprotocol JsonSchema
   (-accept [this children options] "transforms schema to JSON Schema"))
 
-(defn -ref [x] {:$ref (apply str "#/definitions/"
-                             (cond
-                               ;; / must be encoded as ~1 in JSON Schema
-                               ;; https://json-schema.org/draft/2019-09/relative-json-pointer.html
-                               ;; https://www.rfc-editor.org/rfc/rfc6901
-                               (qualified-keyword? x) [(namespace x) "~1"
-                                                       (name x)]
-                               (keyword? x) [(name x)]
-                               :else [x]))})
+(defn -ref [schema {::keys [transform definitions] :as options}]
+  (let [ref (as-> (m/-ref schema) $
+              (cond (var? $) (let [{:keys [ns name]} (meta $)]
+                               (str (symbol (str ns) (str name))))
+                    (qualified-ident? $) (str (namespace $) "/" (name $))
+                    :else (str $)))]
+    (when-not (contains? @definitions ref)
+      (let [child (m/deref schema)]
+        (swap! definitions assoc ref ::recursion-stopper)
+        (swap! definitions assoc ref (transform child options))))
+    ;; '/' must be encoded as '~1' in JSON Schema - https://www.rfc-editor.org/rfc/rfc6901
+    {:$ref (apply str "#/definitions/" (str/replace ref #"/" "~1"))}))
 
-(defn -schema [schema {::keys [transform definitions] :as options}]
-  (let [result (transform (m/deref schema) options)]
-    (if-let [ref (m/-ref schema)]
-      (let [ref* (-ref ref)]
-        (when-not (= ref* result) ; don't create circular definitions
-          (swap! definitions assoc ref result))
-        ref*)
-      result)))
+(defn -schema [schema {::keys [transform] :as options}]
+  (if (m/-ref schema)
+    (-ref schema options)
+    (transform (m/deref schema) options)))
 
 (defn select [m] (select-keys m [:title :description :default]))
 
@@ -174,7 +174,7 @@
 
 (defmethod accept :=> [_ _ _ _] {})
 (defmethod accept :function [_ _ _ _] {})
-(defmethod accept :ref [_ schema _ _] (-ref (m/-ref schema)))
+(defmethod accept :ref [_ schema _ options] (-ref schema options))
 (defmethod accept :schema [_ schema _ options] (-schema schema options))
 (defmethod accept ::m/schema [_ schema _ options] (-schema schema options))
 

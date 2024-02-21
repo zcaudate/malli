@@ -9,6 +9,7 @@
             [clojure.test.check.rose-tree :as rose]
             [malli.core :as m]
             [malli.registry :as mr]
+            [malli.impl.util :refer [-last -merge]]
             #?(:clj [borkdude.dynaload :as dynaload])))
 
 (declare generator generate -create)
@@ -47,6 +48,8 @@
 ;;   [:vector M] would generate like [:= []] if M were unreachable.
 ;;   [:vector {:min 1} M] would itself be unreachable if M were unreachable.
 
+(def nil-gen (gen/return nil))
+
 (defn -never-gen
   "Return a generator of no values that is compatible with -unreachable-gen?."
   [{::keys [original-generator-schema] :as _options}]
@@ -70,11 +73,11 @@
 
 (defn- -random [seed] (if seed (random/make-random seed) (random/make-random)))
 
-(defn ^:deprecated -recur [schema options]
+(defn ^:deprecated -recur [_schema options]
   (println (str `-recur " is deprecated, please update your generators. See instructions in malli.generator."))
   [true options])
 
-(defn ^:deprecated -maybe-recur [schema options]
+(defn ^:deprecated -maybe-recur [_schema options]
   (println (str `-maybe-recur " is deprecated, please update your generators. See instructions in malli.generator."))
   options)
 
@@ -154,27 +157,37 @@
     (gen-one-of gs)
     (-never-gen options)))
 
+(defn- -build-map [kvs]
+  (persistent!
+   (reduce
+    (fn [acc [k v]]
+      (cond (and (= k ::m/default) (map? v)) (reduce-kv assoc! acc v)
+            (nil? k) acc
+            :else (assoc! acc k v)))
+    (transient {}) kvs)))
+
+(defn- -value-gen [k s options]
+  (let [g (generator s options)]
+    (cond->> g (-not-unreachable g) (gen/fmap (fn [v] [k v])))))
+
 (defn -map-gen [schema options]
-  (let [entries (m/entries schema)
-        value-gen (fn [k s] (let [g (generator s options)]
-                              (cond->> g
-                                (-not-unreachable g)
-                                (gen/fmap (fn [v] [k v])))))
-        gens-req (->> entries
-                      (remove #(-> % last m/properties :optional))
-                      (map (fn [[k s]] (value-gen k s))))
-        gen-opt (->> entries
-                     (filter #(-> % last m/properties :optional))
-                     (map (fn [[k s]] (let [g (-not-unreachable (value-gen k s))]
-                                        (gen-one-of (cond-> [(gen/return nil)] g (conj g)))))))
-        undefault (fn [kvs] (reduce (fn [acc [k v]]
-                                      (cond (and (= k ::m/default) (map? v)) (into acc (map identity v))
-                                            (nil? k) acc
-                                            :else (conj acc [k v]))) [] kvs))]
-    (if (not-any? -unreachable-gen? gens-req)
-      (gen/fmap (fn [[req opt]] (into {} (undefault (concat req opt))))
-                (gen/tuple (apply gen/tuple gens-req) (apply gen/tuple gen-opt)))
-      (-never-gen options))))
+  (loop [[[k s :as e] & entries] (m/entries schema)
+         gens []]
+    (if (nil? e)
+      (gen/fmap -build-map (apply gen/tuple gens))
+      (if (-> e -last m/properties :optional)
+        ;; opt
+        (recur
+         entries
+         (conj gens
+               (if-let [g (-not-unreachable (-value-gen k s options))]
+                 (gen-one-of [nil-gen g])
+                 nil-gen)))
+        ;;; req
+        (let [g (-value-gen k s options)]
+          (if (-unreachable-gen? g)
+            (-never-gen options)
+            (recur entries (conj gens g))))))))
 
 (defn -map-of-gen [schema options]
   (let [{:keys [min max]} (-min-max schema options)
@@ -418,7 +431,7 @@
 
 (defmethod -schema-generator :maybe [schema options]
   (let [g (-> schema (m/children options) first (generator options) -not-unreachable)]
-    (gen-one-of (cond-> [(gen/return nil)]
+    (gen-one-of (cond-> [nil-gen]
                   g (conj g)))))
 
 (defmethod -schema-generator :tuple [schema options]
@@ -429,7 +442,7 @@
 #?(:clj (defmethod -schema-generator :re [schema options] (-re-gen schema options)))
 (defmethod -schema-generator :any [_ _] (ga/gen-for-pred any?))
 (defmethod -schema-generator :some [_ _] gen/any-printable)
-(defmethod -schema-generator :nil [_ _] (gen/return nil))
+(defmethod -schema-generator :nil [_ _] nil-gen)
 (defmethod -schema-generator :string [schema options] (-string-gen schema options))
 (defmethod -schema-generator :int [schema options] (gen/large-integer* (-min-max schema options)))
 (defmethod -schema-generator :double [schema options]
@@ -469,16 +482,23 @@
 ;; Creating a generator by different means, centralized under [[-create]]
 ;;
 
+(defn- -create-from-return [props]
+  (when (contains? props :gen/return)
+    (gen/return (:gen/return props))))
+
 (defn- -create-from-elements [props]
   (some-> (:gen/elements props) gen-elements))
+
+(extend-protocol Generator
+  #?(:clj Object, :cljs default)
+  (-generator [schema options]
+    (-schema-generator schema (assoc options ::original-generator-schema schema))))
 
 (defn- -create-from-gen
   [props schema options]
   (or (:gen/gen props)
       (when-not (:gen/elements props)
-        (if (satisfies? Generator schema)
-          (-generator schema options)
-          (-schema-generator schema (assoc options ::original-generator-schema schema))))))
+        (-generator schema options))))
 
 (defn- -create-from-schema [props options]
   (some-> (:gen/schema props) (generator options)))
@@ -486,15 +506,17 @@
 (defn- -create-from-fmap [props schema options]
   (when-some [fmap (:gen/fmap props)]
     (gen/fmap (m/eval fmap (or options (m/options schema)))
-              (or (-create-from-elements props)
+              (or (-create-from-return props)
+                  (-create-from-elements props)
                   (-create-from-schema props options)
                   (-create-from-gen props schema options)
-                  (gen/return nil)))))
+                  nil-gen))))
 
 (defn- -create [schema options]
-  (let [props (merge (m/type-properties schema)
-                     (m/properties schema))]
+  (let [props (-merge (m/type-properties schema)
+                      (m/properties schema))]
     (or (-create-from-fmap props schema options)
+        (-create-from-return props)
         (-create-from-elements props)
         (-create-from-schema props options)
         (-create-from-gen props schema options)
@@ -539,25 +561,27 @@
   ([?schema] (function-checker ?schema nil))
   ([?schema {::keys [=>iterations] :or {=>iterations 100} :as options}]
    (let [schema (m/schema ?schema options)
+         -try (fn [f] (try [(f) true] (catch #?(:clj Exception, :cljs js/Error) e [e false])))
          check (fn [schema]
-                 (let [{:keys [input output]} (m/-function-info schema)
+                 (let [{:keys [input output guard]} (m/-function-info schema)
                        input-generator (generator input options)
-                       output-validator (m/validator output options)
-                       validate (fn [f args] (output-validator (apply f args)))]
+                       valid-output? (m/validator output options)
+                       valid-guard? (if guard (m/validator guard options) (constantly true))
+                       validate (fn [f args] (as-> (apply f args) $ (and (valid-output? $) (valid-guard? [args $]))))]
                    (fn [f]
                      (let [{:keys [result shrunk]} (->> (prop/for-all* [input-generator] #(validate f %))
                                                         (check/quick-check =>iterations))
                            smallest (-> shrunk :smallest first)]
                        (when-not (true? result)
                          (let [explain-input (m/explain input smallest)
-                               response (when-not explain-input
-                                          (try (apply f smallest) (catch #?(:clj Exception, :cljs js/Error) e e)))
-                               explain-output (when-not explain-input (m/explain output response))]
-                           (cond-> shrunk
-                             explain-input (assoc ::explain-input explain-input)
-                             explain-output (assoc ::explain-output explain-output)
-                             (ex-message result) (-> (update :result ex-message)
-                                                     (dissoc :result-data)))))))))]
+                               [result success] (when-not explain-input (-try (fn [] (apply f smallest))))
+                               explain-output (when (and success (not explain-input)) (m/explain output result))
+                               explain-guard (when (and success guard (not explain-output)) (m/explain guard [smallest result]))]
+                           (cond-> (assoc shrunk ::m/result result)
+                             explain-input (assoc ::m/explain-input explain-input)
+                             explain-output (assoc ::m/explain-output explain-output)
+                             explain-guard (assoc ::m/explain-guard explain-guard)
+                             (ex-message result) (-> (update :result ex-message) (dissoc :result-data)))))))))]
      (condp = (m/type schema)
        :=> (check schema)
        :function (let [checkers (map #(function-checker % options) (m/-children schema))]

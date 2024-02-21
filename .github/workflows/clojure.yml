@@ -12,18 +12,17 @@ jobs:
     strategy:
       matrix:
         # Supported Java versions: LTS releases and latest
-        # TODO: Replace 19=>20 when available
-        jdk: [8, 11, 17, 19]
-        clojure: [10, 11]
+        jdk: [8, 11, 17, 21]
+        clojure: [11]
 
     name: Clojure ${{ matrix.clojure }} (Java ${{ matrix.jdk }})
 
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Setup Java ${{ matrix.jdk }}
-        uses: actions/setup-java@v3.10.0
+        uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: ${{ matrix.jdk }}
@@ -37,12 +36,15 @@ jobs:
 
   build-cljs:
     name: ClojureScript
+    strategy:
+      matrix:
+        mode: [none, advanced, cherry-none, cherry-advanced]
 
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Setup Java 11
-        uses: actions/setup-java@v3.10.0
+        uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: 11
@@ -52,22 +54,22 @@ jobs:
         with:
           cli: latest
       - name: Setup Node.js
-        uses: actions/setup-node@v3.6.0
+        uses: actions/setup-node@v4.0.1
         with:
           node-version: 16
       - name: Install dependencies
         run: npm ci
-      - name: Run tests
-        run: bin/node
+      - name: Run tests on ${{ matrix.mode }}
+        run: bin/node ${{ matrix.mode }}
 
   build-bb:
     name: Babashka
 
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Setup Java 11
-        uses: actions/setup-java@v3.10.0
+        uses: actions/setup-java@v4
         with:
           distribution: zulu
           java-version: 11

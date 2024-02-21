@@ -21,8 +21,8 @@
   (let [{:keys [min max]} (-> schema m/properties)]
     (cond
       (and min max) (str " with length between " min " and " max " inclusive")
-      min (str " with length <= " min)
-      max (str " with length >= " max)
+      min (str " with length >= " min)
+      max (str " with length <= " max)
       :else "")))
 
 (defn -pluralize-times [n]
@@ -53,7 +53,7 @@
 
 (defn -schema [schema children _options]
   (let [just-one (= 1 (count (:registry (m/properties schema))))]
-    (str (last children)
+    (str (or (m/-ref schema) (last children))
          (when (:registry (m/properties schema))
            (str " "
                 (when-not just-one "which is: ")

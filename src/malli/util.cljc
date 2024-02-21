@@ -109,7 +109,7 @@
   "Returns a Schema instance with updated properties."
   [?schema f & args]
   (let [schema (m/schema ?schema)]
-    (m/-set-properties schema (not-empty (apply f (m/-properties schema) args)))))
+    (apply m/-update-properties schema f args)))
 
 (defn closed-schema
   "Maps are implicitly open by default. They can be explicitly closed or
@@ -357,32 +357,6 @@
             (assoc s k (if ks (up (get s k (m/schema :map (m/options schema))) ks f args)
                               (apply f (get s k) args))))]
     (up schema ks f args)))
-
-;;
-;; map-syntax
-;;
-
-(defn -map-syntax-walker [schema _ children _]
-  (let [properties (m/properties schema)
-        options (m/options schema)
-        r (when properties (properties :registry))
-        properties (if r (c/assoc properties :registry (m/-property-registry r options m/-form)) properties)]
-    (cond-> {:type (m/type schema)}
-      (seq properties) (clojure.core/assoc :properties properties)
-      (seq children) (clojure.core/assoc :children children))))
-
-(defn to-map-syntax
-  ([?schema] (to-map-syntax ?schema nil))
-  ([?schema options] (m/walk ?schema -map-syntax-walker options)))
-
-(defn from-map-syntax
-  ([m] (from-map-syntax m nil))
-  ([{:keys [type properties children] :as m} options]
-   (if (map? m)
-     (let [<-child (if (-> children first vector?) (fn [f] #(clojure.core/update % 2 f)) identity)
-           [properties options] (m/-properties-and-options properties options m/-form)]
-       (m/into-schema type properties (mapv (<-child #(from-map-syntax % options)) children) options))
-     m)))
 
 ;;
 ;; Schemas

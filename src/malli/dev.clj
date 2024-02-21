@@ -4,13 +4,37 @@
             [malli.dev.pretty :as pretty]
             [malli.instrument :as mi]))
 
+(defn -log!
+  ([text] (-log! text (pretty/-printer)))
+  ([text printer] (pretty/-log! text printer)))
+
+(defn -capture-fail!
+  ([] (-capture-fail! nil))
+  ([{:keys [report] :or {report (pretty/reporter)}}]
+   (alter-var-root
+    #'m/-fail!
+    (fn [f] (-> (fn -fail!
+                  ([type] (-fail! type nil))
+                  ([type data] (let [e (m/-exception type data)]
+                                 (report type data)
+                                 (throw e))))
+                (with-meta {::original f}))))))
+
+(defn -uncapture-fail! []
+  (alter-var-root #'m/-fail! (fn [f] (-> f meta ::original (or f)))))
+
+;;
+;; Public API
+;;
+
 (defn stop!
   "Stops instrumentation for all functions vars and removes clj-kondo type annotations."
   []
   (remove-watch @#'m/-function-schemas* ::watch)
-  (mi/unstrument!)
+  (->> (mi/unstrument!) (count) (format "unstrumented %d function vars") (-log!))
   (clj-kondo/save! {})
-  (println "stopped instrumentation"))
+  (-uncapture-fail!)
+  (-log! "dev-mode stopped"))
 
 (defn start!
   "Collects defn schemas from all loaded namespaces and starts instrumentation for
@@ -20,17 +44,21 @@
   ([] (start! {:report (pretty/reporter)}))
   ([options]
    (with-out-str (stop!))
+   (-capture-fail! options)
    (mi/collect! {:ns (all-ns)})
-   (let [watch (fn [_ _ old new]
-                 (mi/instrument! (assoc options :data (->> (for [[n d] (:clj new)
-                                                                 :let [no (get-in old [:clj n])]
-                                                                 [s d] d
-                                                                 :when (not= d (get no s))]
-                                                             [[n s] d])
-                                                           (into {})
-                                                           (reduce-kv assoc-in {}))))
+   (let [watch (bound-fn [_ _ old new]
+                 (->> (for [[n d] (:clj new)
+                            :let [no (get-in old [:clj n])]
+                            [s d] d
+                            :when (not= d (get no s))]
+                        [[n s] d])
+                      (into {})
+                      (reduce-kv assoc-in {})
+                      (assoc options :data)
+                      (mi/instrument!))
                  (clj-kondo/emit!))]
      (add-watch @#'m/-function-schemas* ::watch watch))
-   (mi/instrument! options)
+   (let [count (->> (mi/instrument! options) (count))]
+     (when (pos? count) (-log! (format "instrumented %d function vars" count))))
    (clj-kondo/emit!)
-   (println "started instrumentation")))
+   (-log! "dev-mode started")))

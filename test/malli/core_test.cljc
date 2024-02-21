@@ -10,8 +10,10 @@
             [malli.impl.util :as miu]
             [malli.registry :as mr]
             [malli.transform :as mt]
-            [malli.util :as mu])
-  #?(:clj (:import (clojure.lang IFn PersistentArrayMap PersistentHashMap))))
+            [malli.util :as mu]
+            #?(:clj [malli.test-macros :refer [when-env]]))
+  #?(:clj  (:import (clojure.lang IFn PersistentArrayMap PersistentHashMap))
+     :cljs (:require-macros [malli.test-macros :refer [when-env]])))
 
 (defn with-schema-forms [result]
   (some-> result
@@ -102,6 +104,7 @@
                  (m/-create-entry-parser
                   [::x] nil nil)))))
 
+;;
 (deftest eval-test
   (testing "with defaults"
     (is (= 2 ((m/eval inc) 1)))
@@ -117,25 +120,35 @@
     (is (schema= [[:x nil 'int?] [:y nil 'string?]] (m/eval "(m/children [:map [:x int?] [:y string?]])"))))
   #?(:bb nil
      :default
-     (testing "with options"
-       (testing "disabling sci"
-         (is (= 2 ((m/eval inc {::m/disable-sci true}) 1)))
-         (is (thrown? #?(:clj Exception, :cljs js/Error) ((m/eval 'inc {::m/disable-sci true}) 1))))
-       (testing "custom bindings"
-         (let [f '(fn [schema] (m/form schema))]
-           (is (thrown? #?(:clj Exception, :cljs js/Error) ((m/eval f) :string)))
-           (is (= :string ((m/eval f {::m/sci-options {:namespaces {'malli.core {'form m/form}}}}) :string))))))))
+     (when-env
+      "TEST_SCI"
+      (testing "with options"
+        (testing "disabling sci"
+          (is (= 2 ((m/eval inc {::m/disable-sci true}) 1)))
+          (is (thrown? #?(:clj Exception, :cljs js/Error) ((m/eval 'inc {::m/disable-sci true}) 1))))
+        (testing "custom bindings"
+          (let [f '(fn [schema] (m/form schema))]
+            (is (thrown? #?(:clj Exception, :cljs js/Error) ((m/eval f) :string)))
+            (is (= :string ((m/eval f {::m/sci-options {:namespaces {'malli.core {'form m/form}}}}) :string)))))))))
 
 (deftest into-schema-test
   (is (form= [:map {:closed true} [:x int?]]
              (m/into-schema :map {:closed true} [[:x int?]]))))
 
 (deftest schema-walker-test
-  (is (form= [:map {:closed true} [:x int?]]
-             (m/walk [:map {:closed true} [:x int?]] (m/schema-walker identity))))
-  (is (form= [:map {:registry {::age [:and int? [:> 18]]}} [:age ::age]]
-             (m/walk [:map {:registry {::age [:and int? [:> 18]]}} [:age ::age]]
-                     (m/schema-walker identity)))))
+  (testing "no-op schema-walker"
+    (is (form= [:map {:closed true} [:x int?]]
+               (m/walk [:map {:closed true} [:x int?]] (m/schema-walker identity))))
+    (is (form= [:map {:registry {::age [:and int? [:> 18]]}} [:age ::age]]
+               (m/walk [:map {:registry {::age [:and int? [:> 18]]}} [:age ::age]]
+                       (m/schema-walker identity))))
+    (testing "doesn't affect deref behaviour"
+      (let [schema [:schema {:registry {"Foo" :int}} "Foo"]
+            walked (m/walk [:schema {:registry {"Foo" :int}} "Foo"]
+                           (m/schema-walker identity))]
+        (is (form= schema walked))
+        (is (form= (-> schema m/deref) (-> walked m/deref)))
+        (is (form= (-> schema m/deref m/deref) (-> walked m/deref m/deref)))))))
 
 (defrecord SomeRecord [])
 
@@ -177,30 +190,29 @@
               [string? {:decode/string '{:enter #(str "olipa_" %), :leave #(str % "_avaruus")}}]
               "kerran" mt/string-transformer)))
 
-      (testing "sci not available"
-        (let [schema (m/schema
-                      [string? {:decode/string '{:enter #(str "olipa_" %), :leave #(str % "_avaruus")}}]
-                      {::m/disable-sci true})]
+      (when-env
+       "TEST_SCI"
+       (testing "sci not available"
+         (let [schema (m/schema
+                       [string? {:decode/string '{:enter #(str "olipa_" %), :leave #(str % "_avaruus")}}]
+                       {::m/disable-sci true})]
 
-          (is (thrown-with-msg?
-               #?(:clj Exception, :cljs js/Error)
-               #":malli.core/sci-not-available"
-               (m/decoder schema mt/string-transformer)))
+           (is (thrown-with-msg?
+                #?(:clj Exception, :cljs js/Error)
+                #":malli.core/sci-not-available"
+                (m/decoder schema mt/string-transformer)))
 
-          (is (thrown-with-msg?
-               #?(:clj Exception, :cljs js/Error)
-               #":malli.core/sci-not-available"
-               (m/decoder
-                [string? {:decode/string '{:enter #(str "olipa_" %), :leave #(str % "_avaruus")}}]
-                {::m/disable-sci true} mt/string-transformer)))
+           (is (thrown-with-msg?
+                #?(:clj Exception, :cljs js/Error)
+                #":malli.core/sci-not-available"
+                (m/decoder
+                 [string? {:decode/string '{:enter #(str "olipa_" %), :leave #(str % "_avaruus")}}]
+                 {::m/disable-sci true} mt/string-transformer)))
 
-          (testing "direct options win"
-            (is (m/decoder schema {::m/disable-sci false} mt/string-transformer)))))
+           (testing "direct options win"
+             (is (m/decoder schema {::m/disable-sci false} mt/string-transformer))))))
 
       (is (true? (m/validate (over-the-wire schema) 1)))
-
-      (is (= {:type 'int?}
-             (mu/to-map-syntax schema)))
 
       (testing "ast"
         (is (= {:type 'int?} (m/ast schema)))
@@ -260,19 +272,6 @@
       (doseq [schema [schema schema*]]
         (is (true? (m/validate (over-the-wire schema) 1))))
 
-      (is (= {:type :and
-              :children [{:type 'int?}
-                         {:type :or
-                          :children [{:type 'pos-int?}
-                                     {:type 'neg-int?}]}]}
-             (mu/to-map-syntax schema)))
-      (is (= {:type :and
-              :children [{:type 'int?}
-                         {:type :orn
-                          :children [[:pos nil {:type 'pos-int?}]
-                                     [:neg nil {:type 'neg-int?}]]}]}
-             (mu/to-map-syntax schema*)))
-
       (testing "ast"
         (is (= {:type :and
                 :children [{:type 'int?}
@@ -293,25 +292,42 @@
       (is (= [:and 'int? [:orn [:pos 'pos-int?] [:neg 'neg-int?]]] (m/form schema*))))
 
     (testing "transforming :or"
-      (testing "first valid transformed branch is used"
-        (doseq [schema [[:or
-                         [:map [:x keyword?]]
-                         int?
-                         [:map [:y keyword?]]
-                         keyword?]
-                        [:orn
-                         [:äxy [:map [:x keyword?]]]
-                         [:n int?]
-                         [:yxy [:map [:y keyword?]]]
-                         [:kw keyword?]]]]
-          (are [input result]
-            (= (m/decode schema input mt/string-transformer) result)
+      (let [math (mt/transformer {:name :math})
+            math-string [:string {:decode/math (partial str "math_")}]
+            math-kw-string [:and math-string [:any {:decode/math keyword}]]
+            bono-string [:string {:decode/math (partial str "such_")}]]
 
-            {:x "true", :y "true"} {:x :true, :y "true"}
-            {:x false, :y "true"} {:x false, :y :true}
-            {:x false, :y false} {:x false, :y false}
-            1 1
-            "kikka" :kikka)))
+        (testing "first successful branch is selected"
+          (is (= "math_1"
+                 (m/decode math-string 1 math)
+                 (m/decode [:and math-string] 1 math)
+                 (m/decode [:or math-string] 1 math)
+                 (m/decode [:or
+                            math-kw-string
+                            math-string
+                            bono-string] 1 math)
+                 (m/decode [:orn ["string" math-string]] 1 math)
+                 (m/decode [:orn
+                            ["kw-math" math-kw-string]
+                            ["math" math-string]
+                            ["bono" bono-string]] 1 math))))
+
+        (testing "first branch value is selected as fallback, even if invalid"
+          (is (= :math_1
+                 (m/decode [:or
+                            math-kw-string
+                            :string] 1 math)
+                 (m/decode [:orn
+                            ["kw-math" math-kw-string]
+                            ["string" :string]] 1 math))))
+
+        (testing "first branch nil can be selected as a fallback"
+          (is (= nil (m/decode
+                      [:or
+                       [:keyword {:decode/math (constantly nil)}]
+                       :keyword]
+                      "kikka"
+                      (mt/transformer {:name :math}))))))
 
       (testing "top-level transformations are retained"
         (doseq [schema [[:or {:decode/string {:enter (fn [m] (update m :enter #(or % true)))
@@ -331,15 +347,13 @@
                                 [:y keyword?]
                                 [:enter boolean?]]]]]]
           (are [input result]
-            (= (m/decode (mu/closed-schema schema) input mt/string-transformer) result)
+            (= (m/decode (mu/closed-schema schema) input (mt/string-transformer)) result)
 
-            {:x "true"} {:x :true, :enter true, :leave true}
-            {:x "true", :enter "invalid"} {:x "true", :enter "invalid", :leave true}
-
-            {:y "true"} {:y :true, :enter true, :leave true}
-            {:y "true", :leave "invalid"} {:y "true", :enter true, :leave "invalid"}
-
-            {:x "true", :y "true"} {:x "true", :y "true", :enter true, :leave true}))))
+            {:x "true"} {:x :true, :enter true, :leave true} ;; first
+            {:x "true", :enter "invalid"} {:x :true, :enter "invalid", :leave true} ;; first (fallback)
+            {:y "true"} {:y :true, :enter true, :leave true} ;; second
+            {:y "true", :leave "invalid"} {:y "true", :enter true, :leave "invalid"} ;; no match
+            {:x "true", :y "true"} {:x :true, :y "true", :enter true, :leave true})))) ;; first (fallback))
 
     (testing "explain with branches"
       (let [schema [:and pos-int? neg-int?]]
@@ -486,9 +500,6 @@
 
       (is (true? (m/validate (over-the-wire schema) 1)))
 
-      (is (= {:type :>, :children [0]}
-             (mu/to-map-syntax schema)))
-
       (testing "ast"
         (is (= {:type :>, :value 0}
                (m/ast schema)))
@@ -522,9 +533,6 @@
           (is (= [{:a 1} {:b 2}] (m/children schema)))))
 
       (is (true? (m/validate (over-the-wire schema) 1)))
-
-      (is (= {:type :enum, :children [1 2]}
-             (mu/to-map-syntax schema)))
 
       (testing "ast"
         (is (= {:type :enum, :values [1 2]}
@@ -561,9 +569,6 @@
                 1 mt/string-transformer)))
 
       (is (true? (m/validate (over-the-wire schema) 1)))
-
-      (is (= {:type :maybe, :children [{:type 'int?}]}
-             (mu/to-map-syntax schema)))
 
       (testing "ast"
         (is (= {:type :maybe, :child {:type 'int?}}
@@ -614,11 +619,6 @@
                 mt/string-transformer)))
 
         (is (true? (m/validate (over-the-wire ConsCell) [1 [2 nil]])))
-
-        (is (= {:type :schema
-                :properties {:registry {::cons [:maybe [:tuple 'int? [:ref ::cons]]]}}
-                :children [{:type :malli.core/schema, :children [::cons]}]}
-               (mu/to-map-syntax ConsCell)))
 
         (testing "ast"
           (is (= {:type :schema
@@ -734,19 +734,6 @@
 
       (is (true? (m/validate (over-the-wire schema) 1)))
 
-      (is (= {:type :and
-              :children [{:type :and
-                          :children [{:type ::m/schema
-                                      :children [::a]}
-                                     {:type ::m/schema
-                                      :children [::b]}
-                                     {:type ::m/schema
-                                      :children [::c]}]}]
-              :properties {:registry {::a ::b
-                                      ::b ::c
-                                      ::c [:schema 'pos-int?]}}}
-             (mu/to-map-syntax schema)))
-
       (testing "ast"
         (is (= {:type :and,
                 :children [{:type :and
@@ -797,9 +784,6 @@
 
         (is (true? (m/validate (over-the-wire schema) "a.b")))
 
-        (is (= {:type :re, :children [re]}
-               (mu/to-map-syntax schema)))
-
         (testing "ast"
           (is (= {:type :re, :value re}
                  (m/ast schema)))
@@ -845,11 +829,6 @@
                   1 mt/string-transformer)))
 
         (is (true? (m/validate (over-the-wire schema) 12)))
-
-        (is (= {:type :fn
-                :children [fn]
-                :properties {:description "number between 10 and 18"}}
-               (mu/to-map-syntax schema)))
 
         (testing "ast"
           (is (= {:type :fn
@@ -983,12 +962,6 @@
               mt/string-transformer)))
 
       (is (true? (m/validate (over-the-wire schema) valid)))
-
-      (is (= {:type :map
-              :children [[:x nil {:type 'boolean?}]
-                         [:y {:optional true} {:type 'int?}]
-                         [:z {:optional false} {:type 'string?}]]}
-             (mu/to-map-syntax schema)))
 
       (testing "ast"
         (is (= {:type :map,
@@ -1175,18 +1148,6 @@
 
       (is (true? (m/validate (over-the-wire schema) valid1)))
 
-      (is (= {:type :multi
-              :properties {:dispatch :type, :decode/string '(fn [x] (update x :type keyword))}
-              :children [[:sized nil {:type :map
-                                      :children [[:type nil {:type 'keyword?}]
-                                                 [:size nil {:type 'int?}]]}]
-                         [:human nil {:type :map
-                                      :children [[:type nil {:type 'keyword?}]
-                                                 [:name nil {:type 'string?}]
-                                                 [:address nil {:type :map
-                                                                :children [[:country nil {:type 'keyword?}]]}]]}]]}
-             (mu/to-map-syntax schema)))
-
       (testing "ast"
         (is (= {:type :multi,
                 :keys {:sized {:order 0,
@@ -1302,9 +1263,6 @@
             {:x 1} mt/string-transformer)))
 
     (is (true? (m/validate (over-the-wire [:map-of string? int?]) {"age" 18})))
-
-    (is (= {:type :map-of, :children [{:type 'int?} {:type 'pos-int?}]}
-           (mu/to-map-syntax [:map-of int? pos-int?])))
 
     (testing "ast"
       (is (= {:type :map-of,
@@ -1571,13 +1529,6 @@
                 [schema value expected] data]
           (testing name
             (is (results= expected (m/explain schema value)))))))
-
-    (testing "visit"
-      (doseq [name [:vector :sequential :set]]
-        (is (= {:type name, :children [{:type 'int?}]}
-               (mu/to-map-syntax [name int?]))))
-      (is (= {:type :tuple, :children [{:type 'int?} {:type 'int?}]}
-             (mu/to-map-syntax [:tuple int? int?]))))
 
     (testing "ast"
       (doseq [[name x] [[:vector [1 2 3]] [:sequential [1 2 3]] [:set #{1 2 3}]]]
@@ -1997,42 +1948,39 @@
                  options))))))
 
 (deftest custom-registry-qualified-keyword-in-map-test
-  (let [schema [:map {:registry {::id int?
-                                 ::location [:tuple :int :int]
-                                 ::country string?}}
-                ::id
-                [::location]
+  (let [schema [:map {:registry {:user/id int?
+                                 "user/location" [:tuple :int :int]
+                                 'user/country string?}}
+                :user/id
+                ["user/location"]
                 [:name string?]
-                [::country {:optional true}]]]
+                ['user/country {:optional true}]]]
 
-    (testing "Example with qualified keyword + optional, regular key"
-      (is (m/validate schema {::id 123 ::location [1 1] ::country "Finland" :name "Malli"})))
+    (testing "Example with references + optional, regular key"
+      (is (m/validate schema {:user/id 123 "user/location" [1 1] 'user/country "Finland" :name "Malli"})))
 
     (testing "Optional qualified keyword is optional"
-      (is (m/validate schema {::id 123 ::location [1 1] :name "Malli"}))))
+      (is (m/validate schema {:user/id 123 "user/location" [1 1] :name "Malli"}))))
 
-  (testing "invalid ref"
+  (testing "invalid entry"
     (is (thrown-with-msg?
-         #?(:clj Exception, :cljs js/Error) #":malli.core/invalid-ref"
+         #?(:clj Exception, :cljs js/Error) #":malli.core/invalid-entry"
          (m/schema [:map {:registry {:kikka :int}} :int])))))
 
 (deftest simple-schemas
   (testing "simple schemas"
-    (doseq [[type {:keys [schema validate explain decode encode map-syntax ast form]}]
+    (doseq [[type {:keys [schema validate explain decode encode ast form]}]
             {:any {:schema :any
                    :validate {:success [nil 1 "kikka"]}
-                   :map-syntax {:type :any}
                    :ast {:type :any}
                    :form :any}
              :some {:schema :some
                     :validate {:success [1 "kikka"]
                                :failure [nil]}
-                    :map-syntax {:type :some}
                     :ast {:type :some}
                     :form :some}
              :nil {:schema :nil
                    :validate {:success [nil], :failure [1 "kikka"]}
-                   :map-syntax {:type :nil}
                    :ast {:type :nil}
                    :form :nil}
              :string {:schema [:string {:min 1, :max 4}]
@@ -2051,7 +1999,6 @@
                       :encode [["1" "1" mt/string-transformer]
                                ["1" "1" mt/json-transformer]
                                ["--" "<-->" mt/string-transformer [:string {:encode/string {:enter #(str "<" %), :leave #(str % ">")}}]]]
-                      :map-syntax {:type :string, :properties {:min 1, :max 4}}
                       :ast {:type :string, :properties {:min 1, :max 4}}
                       :form [:string {:min 1, :max 4}]}
              :int {:schema [:int {:min 1, :max 4}]
@@ -2070,7 +2017,6 @@
                    :encode [[1 "1" mt/string-transformer]
                             [1 1 mt/json-transformer]
                             [1 3 mt/string-transformer [:int {:encode/string {:enter inc, :leave inc}}]]]
-                   :map-syntax {:type :int, :properties {:min 1, :max 4}}
                    :ast {:type :int, :properties {:min 1, :max 4}}
                    :form [:int {:min 1, :max 4}]}
              :double {:schema [:double {:min 1.0, :max 4.0}]
@@ -2089,7 +2035,6 @@
                       :encode [[1.1 "1.1" mt/string-transformer]
                                [1.1 1.1 mt/json-transformer]
                                [1.1 3.1 mt/string-transformer [:double {:encode/string {:enter inc, :leave inc}}]]]
-                      :map-syntax {:type :double, :properties {:min 1.0, :max 4.0}}
                       :ast {:type :double, :properties {:min 1.0, :max 4.0}}
                       :form [:double {:min 1.0, :max 4.0}]}
              :keyword {:schema :keyword
@@ -2112,7 +2057,6 @@
                                 [:abba "abba" mt/json-transformer]
                                 [:user/abba "user/abba" mt/json-transformer]
                                 [:user/abba "abba" mt/string-transformer [:keyword {:encode/string {:enter name, :leave str}}]]]
-                       :map-syntax {:type :keyword}
                        :ast {:type :keyword}
                        :form :keyword}
              :qualified-keyword {:schema [:qualified-keyword {:namespace :user}]
@@ -2135,7 +2079,6 @@
                                           [:abba "abba" mt/json-transformer]
                                           [:user/abba "user/abba" mt/json-transformer]
                                           [:user/abba "abba" mt/string-transformer [:qualified-keyword {:encode/string {:enter name, :leave str}}]]]
-                                 :map-syntax {:type :qualified-keyword, :properties {:namespace :user}}
                                  :ast {:type :qualified-keyword, :properties {:namespace :user}}
                                  :form [:qualified-keyword {:namespace :user}]}
              :symbol {:schema :symbol
@@ -2158,7 +2101,6 @@
                                ['abba "abba" mt/json-transformer]
                                ['user/abba "user/abba" mt/json-transformer]
                                ['user/abba "abba" mt/string-transformer [:symbol {:encode/string {:enter name, :leave str}}]]]
-                      :map-syntax {:type :symbol}
                       :ast {:type :symbol}
                       :form :symbol}
              :qualified-symbol {:schema :qualified-symbol
@@ -2181,7 +2123,6 @@
                                          ['abba "abba" mt/json-transformer]
                                          ['user/abba "user/abba" mt/json-transformer]
                                          ['user/abba "abba" mt/string-transformer [:qualified-symbol {:encode/string {:enter name, :leave str}}]]]
-                                :map-syntax {:type :qualified-symbol}
                                 :ast {:type :qualified-symbol}
                                 :form :qualified-symbol}
              :uuid {:schema :uuid
@@ -2204,7 +2145,6 @@
                              ["abba" "abba" mt/json-transformer]
                              [123 "123" mt/json-transformer]
                              [#uuid"72b9bf3d-398c-472f-9360-c1a997c22240" "72b9bf3d-398c-472f-9360-c1a997c22240" mt/string-transformer [:uuid {:decode/string {:enter (partial str "72b9bf3d-398c-472f-"), :leave mt/-string->uuid}}]]]
-                    :map-syntax {:type :uuid}
                     :ast {:type :uuid}
                     :form :uuid}}]
 
@@ -2236,9 +2176,6 @@
 
         (testing "form"
           (is (= form (m/form schema))))
-
-        (testing "map-syntax"
-          (is (= map-syntax (mu/to-map-syntax schema))))
 
         (testing "ast"
           (is (= ast (m/ast schema))))))))
@@ -2426,20 +2363,33 @@
         (is (false? (m/validate schema2 (fn [x y] (str x y)))))
 
         (is (nil? (explain-times function-schema-validation-times schema2 (fn [x y] (unchecked-add x y)))))
-        (is (results= {:schema [:=> [:cat int? int?] int?]
-                       :value single-arity
-                       :errors [{:path []
-                                 :in []
-                                 :schema [:=> [:cat int? int?] int?]
-                                 :value single-arity}]}
-                      (m/explain schema2 single-arity)))
+
+        (testing "exception in execution causes single error to root schema path"
+         (is (results= {:schema [:=> [:cat int? int?] int?]
+                        :value single-arity
+                        :errors [{:path []
+                                  :in []
+                                  :schema [:=> [:cat int? int?] int?]
+                                  :value single-arity}]}
+                       (m/explain schema2 single-arity))))
+
+        (testing "error in output adds error to child in path 1"
+          (let [f (fn [x y] (str x y))]
+            (is (results= {:schema [:=> [:cat int? int?] int?]
+                           :value f
+                           :errors [{:path []
+                                     :in []
+                                     :schema [:=> [:cat int? int?] int?]
+                                     :value f}
+                                    {:path [1]
+                                     :in []
+                                     :schema int?
+                                     :value "00"}]}
+                          (m/explain schema2 f)))))
 
         (is (= single-arity (m/decode schema2 single-arity mt/string-transformer)))
 
         (is (true? (validate-times function-schema-validation-times (over-the-wire schema1) valid-f)))
-
-        (is (= {:type :=>, :children [{:type :cat, :children [{:type 'int?} {:type 'int?}]} {:type 'int?}]}
-               (mu/to-map-syntax schema1)))
 
         (is (= {:type :=>
                 :input {:type :cat
@@ -2513,6 +2463,48 @@
                                  :value invalid-f}]}
                       (m/explain schema2 invalid-f))))
 
+      (testing "guards"
+        (let [guard (fn [[[x y] z]] (> (+ x y) z))
+              schema (m/schema
+                      [:=> [:cat :int :int] :int [:fn guard]]
+                      {::m/function-checker mg/function-checker})
+              valid (fn [x y] (dec (+ x y)))
+              invalid (fn [x y] (+ x y))]
+
+          (is (= {:type :=>,
+                  :input {:type :cat
+                          :children [{:type :int} {:type :int}]},
+                  :output {:type :int},
+                  :guard {:type :fn
+                          :value guard}}
+                 (m/ast schema)))
+
+          (is (= nil (m/explain schema valid)))
+
+          (testing "error in guard adds error on path 2"
+            (is (results= {:schema schema,
+                           :value invalid
+                           :errors [{:path [],
+                                     :in [],
+                                     :schema schema
+                                     :value invalid}
+                                    {:path [2]
+                                     :in []
+                                     :schema [:fn guard]
+                                     :value ['(0 0) 0]}]}
+                          (m/explain schema invalid))))
+
+          (testing "instrument"
+            (let [schema [:=> [:cat :int] :int [:fn (fn [[[arg] ret]] (< arg ret))]]
+                  fn (m/-instrument {:schema schema} (fn [x] (* x x)))]
+
+              (is (= 4 (fn 2)))
+
+              (is (thrown-with-msg?
+                   #?(:clj Exception, :cljs js/Error)
+                   #":malli.core/invalid-guard"
+                   (fn 0)))))))
+
       (testing "non-accumulating errors"
         (let [schema (m/schema
                       [:tuple :int [:function [:=> [:cat :int] :int]]]
@@ -2525,12 +2517,7 @@
 
       (is (= valid-f (m/decode schema1 valid-f mt/string-transformer)))
 
-      (is (true? (m/validate (over-the-wire schema1) valid-f)))
-
-      (is (= {:type :function,
-              :children [{:type :=>, :children [{:type :cat, :children [{:type 'int?}]} {:type 'int?}]}
-                         {:type :=>, :children [{:type :cat, :children [{:type 'int?} {:type 'int?}]} {:type 'int?}]}]}
-             (mu/to-map-syntax schema1))))))
+      (is (true? (m/validate (over-the-wire schema1) valid-f))))))
 
 (deftest test-415
   (testing "multi default is not transformed"
@@ -3028,3 +3015,135 @@
               [:y {:optional true} :int]
               [::m/default [:map-of :int :int]]]
              (m/form schema))))))
+
+(deftest -comp-test
+  (let [prefixer (fn [prefix]
+                   (fn [s] (str prefix s)))]
+    (testing "the order of function applications"
+      (is (= "abcxxx"
+             ((m/-comp (prefixer "a")
+                       (prefixer "b")
+                       (prefixer "c")) "xxx")))
+      (is (= "abcdefghixxx"
+             ((m/-comp (prefixer "a")
+                       (prefixer "b")
+                       (prefixer "c")
+                       (prefixer "d")
+                       (prefixer "e")
+                       (prefixer "f")
+                       (prefixer "g")
+                       (prefixer "h")
+                       (prefixer "i")) "xxx"))))))
+
+(deftest issue-925-test
+  (testing "order is retained with catn parse+unparse"
+    (let [schema [:catn
+                  [:a :int]
+                  [:b :int]
+                  [:c :int]
+                  [:d :int]
+                  [:e :int]
+                  [:f :int]
+                  [:g :int]
+                  [:h :int]
+                  [:i :int]]
+          input [1 2 3 4 5 6 7 8 9]]
+      (is (= input (->> input (m/parse schema) (m/unparse schema)))))))
+
+(deftest issue-937-test
+  (testing ":altn can handle just one child entry when nested"
+    (let [schema [:* [:altn [:a [:= :a]]]]
+          value [:a]]
+      (is (= true (m/validate schema value)))
+      (is (= nil (m/explain schema value)))
+      (is (= [[:a :a]] (m/parse schema value)))
+      (is (= value (m/unparse schema (m/parse schema value))))
+      (is (= value (m/decode schema value nil))))))
+
+(def UserId :string)
+
+(def User
+  [:map
+   [:id #'UserId]
+   [:friends {:optional true} [:set [:ref #'User]]]])
+
+(deftest var-registry-test
+  (let [schema (m/schema User)]
+
+    (testing "getting schema over Var works"
+      (is (= UserId (mr/-schema (mr/var-registry) #'UserId)))
+      (is (= User (mr/-schema (mr/var-registry) #'User))))
+
+    (testing "we do not list all Var schemas (yet)"
+      (is (= nil (mr/-schemas (mr/var-registry)))))
+
+    (testing "it works"
+      (is (= User (m/form schema)))
+      (is (every? (m/validator schema) (mg/sample schema {:seed 100}))))))
+
+#?(:clj
+   (deftest roundrobin-var-references
+     (let [schema (m/schema User)]
+
+       (testing "default options with var-registry fails"
+         (is (thrown? Exception
+                      (as-> schema $
+                        (edn/write-string $)
+                        (edn/read-string $)
+                        (every? (m/validator $) (mg/sample schema))))))
+
+       (testing "with custom edamame options with var-registry succeeds"
+         (is (as-> schema $
+               (edn/write-string $)
+               (edn/read-string $ {::edn/edamame-options {:fn true,
+                                                          :regex true,
+                                                          :var resolve}})
+               (every? (m/validator $) (mg/sample schema))))))))
+
+(deftest deref-recursive-test
+  (let [schema [:schema {:registry {::user-id :uuid
+                                    ::address [:map
+                                               [:street :string]
+                                               [:lonlat {:optional true} [:tuple :double :double]]]
+                                    ::user [:map
+                                            [:id ::user-id]
+                                            [:name :string]
+                                            [:friends {:optional true} [:set [:ref ::user]]]
+                                            [:address ::address]]}}
+                ::user]]
+    (is (= [:map
+            [:id :uuid]
+            [:name :string]
+            [:friends {:optional true} [:set [:ref ::user]]]
+            [:address [:map
+                       [:street :string]
+                       [:lonlat {:optional true} [:tuple :double :double]]]]]
+           (m/form (m/deref-recursive schema))
+           (m/form (m/deref-recursive schema {::m/ref-key nil}))))
+    (is (= [:map {:id ::user}
+            [:id [:uuid {:id ::user-id}]]
+            [:name :string]
+            [:friends {:optional true} [:set [:ref ::user]]]
+            [:address [:map {:id ::address}
+                       [:street :string]
+                       [:lonlat {:optional true} [:tuple :double :double]]]]]
+           (m/form (m/deref-recursive schema {::m/ref-key :id}))))
+    (testing "util schemas"
+      (let [registry (merge (m/default-schemas) (mu/schemas))]
+        (is (= [:map [:x :int] [:y :int]]
+               (m/form (m/deref-recursive
+                        [:merge
+                         [:map [:x :int]]
+                         [:map [:y :int]]]
+                        {:registry registry}))))
+        (is (= [:map {:id ::xymap}
+                [::x [:int {:id ::x}]]
+                [::y [:int {:id ::y}]]]
+               (m/form (m/deref-recursive
+                        [:schema {:registry {::x :int
+                                             ::y :int
+                                             ::xmap [:map ::x]
+                                             ::ymap [:map ::y]
+                                             ::xymap [:merge ::xmap ::ymap]}}
+                         ::xymap]
+                        {:registry registry, ::m/ref-key :id}))))))))

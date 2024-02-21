@@ -100,10 +100,10 @@
     (= :keys (:op child)) (assoc child :nilable true)
     (and (keyword? child) (not= :any child)) (keyword "nilable" (name child))
     :else child))
-(defmethod accept :tuple [_ _ children _] children)
+(defmethod accept :tuple [_ _ _ _] :seqable)
 (defmethod accept :multi [_ _ _ _] :any) ;;??
 (defmethod accept :re [_ _ _ _] :string)
-(defmethod accept :fn [_ _ _ _] :fn)
+(defmethod accept :fn [_ _ _ _] :any)
 (defmethod accept :ref [_ _ _ _] :any) ;;??
 (defmethod accept :=> [_ _ _ _] :fn)
 (defmethod accept :function [_ _ _ _] :fn)
@@ -124,10 +124,16 @@
 (defmethod accept :qualified-symbol [_ _ _ _] :symbol)
 (defmethod accept :uuid [_ _ _ _] :any) ;;??
 
-(defmethod accept :+ [_ _ [child] _] {:op :rest, :spec child})
-(defmethod accept :* [_ _ [child] _] {:op :rest, :spec child})
-(defmethod accept :? [_ _ [child] _] {:op :rest, :spec child})
-(defmethod accept :repeat [_ _ [child] _] {:op :rest, :spec child})
+(defn -seqable-or-rest [[child] {:keys [arity]}]
+  (if (= arity :varargs)
+    {:op :rest :spec child}
+    :seqable))
+
+(defmethod accept :+ [_ _  children options] (-seqable-or-rest children options))
+(defmethod accept :* [_ _  children options] (-seqable-or-rest children options))
+(defmethod accept :? [_ _  children options] (-seqable-or-rest children options))
+(defmethod accept :repeat [_ _  children options] (-seqable-or-rest children options))
+
 (defmethod accept :cat [_ _ children _] children)
 (defmethod accept :catn [_ _ children _] (mapv last children))
 (defmethod accept :alt [_ _ _ _] :any) ;;??
@@ -169,7 +175,7 @@
     (reduce
      (fn [acc schema]
        (let [{:keys [input output arity min]} (m/-function-info schema)
-             args (transform input)
+             args (transform input {:arity arity})
              ret (transform output)]
          (conj acc (cond-> {:ns ns-name
                             :name name

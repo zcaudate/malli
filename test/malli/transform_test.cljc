@@ -3,7 +3,8 @@
             [clojure.test :refer [are deftest is testing]]
             [malli.core :as m]
             [malli.core-test]
-            [malli.transform :as mt]))
+            [malli.transform :as mt])
+  #?(:clj (:import (java.net URI))))
 
 (deftest ->interceptor-test
   (are [?interceptor expected]
@@ -40,6 +41,7 @@
   (is (= 1.0 (mt/-string->double "1")))
   (is (= 1.0 (mt/-string->double 1.0)))
   (is (= 1 (mt/-string->double 1)))
+  (is (= "1.0abba" (mt/-string->double "1.0abba")))
   (is (= "abba" (mt/-string->double "abba"))))
 
 (deftest string->keyword
@@ -53,14 +55,23 @@
 
 (deftest string->uuid
   (is (= #uuid "5f60751d-9bf7-4344-97ee-48643c9949ce" (mt/-string->uuid "5f60751d-9bf7-4344-97ee-48643c9949ce")))
-  (is (= #uuid "5f60751d-9bf7-4344-97ee-48643c9949ce" (mt/-string->uuid #uuid"5f60751d-9bf7-4344-97ee-48643c9949ce")))
+  (is (= #uuid "5f60751d-9bf7-4344-97ee-48643c9949ce" (mt/-string->uuid #uuid "5f60751d-9bf7-4344-97ee-48643c9949ce")))
+  (is (= #uuid "b3c4e6b4-6304-4a52-99c3-cb50e737bb94" (mt/-string->uuid "B3C4E6B4-6304-4A52-99C3-CB50E737BB94")))
+
   (is (= "abba" (mt/-string->uuid "abba")))
 
   ;; Regression tests: we should ensure that invalid or incomplete
   ;; uuids are handled unformly in CLJ and CLJS
   (is (= "5f60751d-9bf7-4344-97ee-48643c" (mt/-string->uuid "5f60751d-9bf7-4344-97ee-48643c")))
-  (is (= "1-1-1-1-1" (mt/-string->uuid "1-1-1-1-1"))))
+  (is (= "1-1-1-1-1" (mt/-string->uuid "1-1-1-1-1")))
 
+  ;; Ensure that uuid0 is also a valid uuid
+  (is (= #uuid "00000000-0000-0000-0000-000000000000" (mt/-string->uuid "00000000-0000-0000-0000-000000000000"))))
+
+#?(:clj
+   (deftest string->uri
+     (is (= (URI. "http://example.com") (mt/-string->uri "http://example.com")))
+     (is (= "broken link" (mt/-string->uri "broken link")))))
 
 (deftest string->date
   (is (= #inst "2018-04-27T18:25:37Z" (mt/-string->date "2018-04-27T18:25:37Z")))
@@ -110,6 +121,7 @@
 
 (deftest any->string
   #?(:clj (is (= "1/2" (mt/-any->string 1/2))))
+  #?(:clj (is (= "http://example.com" (mt/-any->string (URI. "http://example.com")))))
   (is (= "0.5" (mt/-any->string 0.5)))
   (is (= nil (mt/-any->string nil))))
 
@@ -130,6 +142,7 @@
       (is (= "1" (m/decode int? "1" mt/json-transformer)))
       (is (= 1.0 (m/decode double? 1 mt/json-transformer)))
       (is (= 1 (m/decode double? 1 mt/string-transformer)))
+      (is (= "1.0x" (m/decode double? "1.0x" mt/string-transformer)))
       (is (= :user/kikka (m/decode keyword? "user/kikka" mt/string-transformer))))
     (testing "encode"
       (is (= "1" (m/encode int? 1 mt/string-transformer)))
@@ -408,10 +421,33 @@
       (is (= {:x :kikka} (m/decode [:map [:x keyword?]] {:x "kikka", :y "kukka"} strict-json-transformer))))
     (testing "encode"
       (is (= "kikka" (m/encode keyword? :kikka strict-json-transformer)))
-      (is (= {:x "kikka"} (m/encode [:map [:x keyword?]] {:x :kikka, :y :kukka} strict-json-transformer)))))
+      (is (= {:x "kikka"} (m/encode [:map [:x keyword?]] {:x :kikka, :y :kukka} strict-json-transformer)))
+
+      (testing "nested map encode"
+        (is (= {:x {:a {:b {}}}}
+               (m/encode [:map
+                          [:x [:map
+                               [:a [:map [:b [:map]]]]]]]
+                         {:x          {:a {:b {}
+                                           :c {}}}
+                          :additional 1}
+                         strict-json-transformer))))
+
+      (testing "recursive map encode"
+        (is (= {:x {"a" {"b" {}}}}
+               (m/encode [:map {:registry {::kw-map [:map-of :keyword [:ref ::kw-map]]}}
+                          [:x [:ref ::kw-map]]]
+
+                         {:x          {:a {:b {}
+                                           ;; TODO: Additional invalid param invalidates the recursive map
+                                           ;;"c" {}
+                                           }}
+                          :additional 1}
+                         strict-json-transformer
+                         ))))))
 
   (let [transformer (mt/transformer
-                     (mt/key-transformer
+                      (mt/key-transformer
                       {:decode #(-> % (subs 4) keyword)
                        :encode #(->> % name (str "key_"))})
                      (mt/string-transformer)
@@ -969,7 +1005,11 @@
             seen (atom [])
             transformer (mt/default-value-transformer {:key :name, :default-fn (fn [_ x] (swap! seen conj x) x)})]
         (is (= {:first 'one, :second 'two} (m/encode schema {} transformer)))
-        (is (= ['one 'two] @seen))))))
+        (is (= ['one 'two] @seen)))))
+
+  (testing ":default/fn property on schema"
+    (let [schema [:string {:default/fn (fn [] "called")}]]
+      (is (= "called" (m/decode schema nil mt/default-value-transformer))))))
 
 (deftest type-properties-based-transformations
   (is (= 12 (m/decode malli.core-test/Over6 "12" mt/string-transformer))))
@@ -986,7 +1026,17 @@
         (is (= {0 #uuid"2ac307dc-4ec8-4046-9b7e-57716b7ecfd2"
                 1 #uuid"820e5003-6fff-480b-9e2b-ec3cdc5d2f78"
                 2 #uuid"017de28f-5801-8c62-9ce9-cef70883794a"}
-               (m/decode schema data mt/json-transformer)))))))
+               (m/decode schema data mt/json-transformer))))))
+  #?(:clj
+     (let [schema [:map-of uri? uri?]
+           good "http://example.com"
+           bad "invalid url"
+           data {good good
+                 bad bad}]
+       (testing data
+         (is (= {(URI. good) (URI. good)
+                 bad bad}
+                (m/decode schema data mt/json-transformer)))))))
 
 #?(:clj
    (deftest -safe-test
@@ -1029,8 +1079,15 @@
                   :equals2 'kikka
                   :equals3 1
                   :equals4 1.1}]
-    (testing "is not enabled by default"
-      (is (= value (m/decode schema value nil))))
-    (testing "works with json and string transformers"
-      (is (= expected (m/decode schema value (mt/json-transformer))))
-      (is (= expected (m/decode schema value (mt/string-transformer)))))))
+    (testing "decoding"
+      (testing "is not enabled by default"
+        (is (= value (m/decode schema value nil))))
+      (testing "works with json and string transformers"
+        (is (= expected (m/decode schema value (mt/json-transformer))))
+        (is (= expected (m/decode schema value (mt/string-transformer))))))
+    (testing "encoding"
+      (testing "is not enabled by default"
+        (is (= expected (m/encode schema expected nil))))
+      (testing "works with json and string transformers"
+        (is (= value (m/encode schema expected (mt/json-transformer))))
+        (is (= value (m/encode schema expected (mt/string-transformer))))))))

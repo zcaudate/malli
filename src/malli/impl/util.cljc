@@ -1,5 +1,5 @@
 (ns malli.impl.util
-  #?(:clj (:import #?(:bb (clojure.lang MapEntry)
+  #?(:clj (:import #?(:bb  (clojure.lang MapEntry)
                       :clj (clojure.lang MapEntry LazilyPersistentVector))
                    (java.util.concurrent TimeoutException TimeUnit FutureTask))))
 
@@ -13,6 +13,10 @@
 (defn -map-invalid [f v] (if (-invalid? v) (f v) v))
 (defn -reduce-kv-valid [f init coll] (reduce-kv (comp #(-map-invalid reduced %) f) init coll))
 
+(defn -last [x] (if (vector? x) (peek x) (last x)))
+(defn -some [pred coll] (reduce (fn [ret x] (if (pred x) (reduced true) ret)) nil coll))
+(defn -merge [m1 m2] (if m1 (persistent! (reduce-kv assoc! (transient m1) m2)) m2))
+
 (defn -error
   ([path in schema value] {:path path, :in in, :schema schema, :value value})
   ([path in schema value type] {:path path, :in in, :schema schema, :value value, :type type}))
@@ -23,7 +27,7 @@
                      (if-not (zero? c)
                        (let [oa (object-array c), iter (.iterator ^Iterable os)]
                          (loop [n 0] (when (.hasNext iter) (aset oa n (f (.next iter))) (recur (unchecked-inc n))))
-                         #?(:bb (vec oa)
+                         #?(:bb  (vec oa)
                             :clj (LazilyPersistentVector/createOwning oa))) []))
              :cljs (into [] (map f) os))))
 
@@ -32,8 +36,8 @@
      (let [task (FutureTask. f), t (Thread. task)]
        (try
          (.start t) (.get task ms TimeUnit/MILLISECONDS)
-         (catch TimeoutException _ (.cancel task true) (.stop t) ::timeout)
-         (catch Exception e (.cancel task true) (.stop t) (throw e))))))
+         (catch TimeoutException _ (.cancel task true) ::timeout)
+         (catch Exception e (.cancel task true) (throw e))))))
 
 #?(:clj
    (defmacro -combine-n
@@ -62,9 +66,9 @@
             ~else)))))
 
 (def ^{:arglists '([[& preds]])} -every-pred
-  #?(:clj (-pred-composer and 16)
+  #?(:clj  (-pred-composer and 16)
      :cljs (fn [preds] (fn [m] (boolean (reduce #(or (%2 m) (reduced false)) true preds))))))
 
 (def ^{:arglists '([[& preds]])} -some-pred
-  #?(:clj (-pred-composer or 16)
+  #?(:clj  (-pred-composer or 16)
      :cljs (fn [preds] (fn [x] (boolean (some #(% x) preds))))))

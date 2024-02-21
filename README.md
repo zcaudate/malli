@@ -67,7 +67,38 @@ So, we decided to spin out our own library, which would do all the things we fee
 
 [![Clojars Project](http://clojars.org/metosin/malli/latest-version.svg)](http://clojars.org/metosin/malli)
 
-Malli requires Clojure 1.10+ and is tested against 1.10 and 1.11.
+Malli requires Clojure 1.11.
+
+## Quickstart
+
+```clojure
+(require '[malli.core :as m])
+
+(def UserId :string)
+
+(def Address
+  [:map
+   [:street :string]
+   [:country [:enum "FI" "UA"]]])
+
+(def User
+  [:map
+   [:id #'UserId]
+   [:address #'Address]
+   [:friends [:set {:gen/max 2} [:ref #'User]]]])
+
+(require '[malli.generator :as mg])
+
+(mg/generate User)
+;{:id "AC",
+; :address {:street "mf", :country "UA"},
+; :friends #{{:id "1dm",
+;             :address {:street "8", :country "UA"},
+;             :friends #{}}}}
+
+(m/validate User *1)
+; => true
+```
 
 ## Syntax
 
@@ -333,7 +364,7 @@ Map schemas can define a special `:malli.core/default` key to handle extra keys:
  {:x 1, :y 2, 1 1, 2 2})
 ; => true
 ```
-default branching can be arbitraty nested:
+default branching can be arbitrarily nested:
 
 ```clojure
 (m/validate
@@ -599,6 +630,36 @@ Detailed errors with `m/explain`:
 ;           :value nil})}
 ```
 
+Under `:errors`, you get a list of errors with the following keys:
+
+* `:path`, error location in Schema
+* `:in`, error location in value
+* `:schema`, schema in error
+* `:value`, value in error
+
+```clojure
+(def Schema [:map [:x [:maybe [:tuple :string]]]])
+
+(def value {:x [1]})
+
+(def error (-> Schema
+               (m/explain value)
+               :errors
+               first))
+
+error
+;{:path [:x 0 0]
+; :in [:x 0]
+; :schema :string
+; :value 1}
+
+(get-in value (:in error))
+; => 1
+
+(mu/get-in Schema (:path error))
+; => :string
+```
+
 Note! If you need error messages that serialize neatly to EDN/JSON, use `malli.util/explain-data` instead.
 
 ## Humanized error messages
@@ -619,6 +680,17 @@ Explain results can be humanized with `malli.error/humanize`:
 ;{:tags #{["should be a keyword"]}
 ; :address {:city ["missing required key"]
 ;           :lonlat [nil ["should be a double"]]}}
+```
+
+Or if you already have a malli validation exception (e.g. in a catch form):
+
+```clojure
+(require '[malli.error :as me])
+
+(try
+  (m/validate Address {:not "an address"})
+  (catch Exception e
+    (-> e ex-data :data :explain me/humanize)))
 ```
 
 ## Custom error messages
@@ -768,6 +840,40 @@ Masking irrelevant parts:
 ```
 
 ## Pretty errors
+
+There are two ways to get pretty errors:
+
+### Development mode
+
+Start development mode:
+
+```clojure
+((requiring-resolve 'malli.dev/start!))
+```
+
+Now, any exception thrown via `malli.core/-fail!` is being captured and pretty printed before being thrown. Pretty printing is extendable using [virhe](https://github.com/metosin/virhe).
+
+Pretty Coercion:
+
+<img src="https://github.com/metosin/malli/blob/master/docs/img/pretty-coerce.png" width=800>
+
+Custom exception (with default layout):
+
+<img src="https://github.com/metosin/malli/blob/master/docs/img/bats-in-the-attic.png" width=800>
+
+Pretty printing in being backed by `malli.dev.virhe/-format` multimethod using `(-> exception (ex-data) :data)` as the default dispatch key. As fallback, exception class - or exception subclass can be used, e.g. the following will handle all `java.sql.SQLException` and it's parent exceptions:
+
+```clojure
+(require '[malli.dev.virhe :as v])
+
+(defmethod v/-format java.sql.SQLException [e _ printer]
+  {:title "Exception thrown"
+   :body [:group
+          (v/-block "SQL Exception" (v/-color :string (ex-message e) printer) printer) :break :break
+          (v/-block "More information:" (v/-link "https://cljdoc.org/d/metosin/malli/CURRENT" printer) printer)]})
+```
+
+### pretty/explain
 
 For pretty development-time error printing, try `malli.dev.pretty/explain`
 
@@ -1445,11 +1551,70 @@ Merged
 ; => true
 ```
 
+`:union` is similar to `:or`, except `:union` combines map schemas in different disjuncts with `:or`.
+For example, `UnionMaps` is equivalent to `[:map [:x [:or :int :string]] [:y [:or :int :string]]]`.
+
+```clojure
+(def OrMaps
+  (m/schema
+    [:or
+     [:map [:x :int] [:y :string]]
+     [:map [:x :string] [:y :int]]]
+    {:registry registry}))
+
+(def UnionMaps
+  (m/schema
+    [:union
+     [:map [:x :int] [:y :string]]
+     [:map [:x :string] [:y :int]]]
+    {:registry registry}))
+
+(m/validate OrMaps {:x "kikka" :y "kikka"})
+; => false
+
+(m/validate UnionMaps {:x "kikka" :y "kikka"})
+; => true
+```
+
+`:merge` and `:union` differ on schemas with common keys. `:merge` chooses the right-most
+schema of common keys, and `:union` combines them with `:or`.
+For example, `MergedCommon` is equivalent to `[:map [:x :int]]`, and `UnionCommon`
+is equivalent to `[:map [:x [:or :string :int]]]`.
+
+```clojure
+(def MergedCommon
+  (m/schema
+    [:merge
+     [:map [:x :string]]
+     [:map [:x :int]]]
+    {:registry registry}))
+
+(def UnionCommon
+  (m/schema
+    [:union
+     [:map [:x :string]]
+     [:map [:x :int]]]
+    {:registry registry}))
+
+(m/validate MergedCommon {:x "kikka"})
+; => true
+(m/validate MergedCommon {:x 1})
+; => false
+(m/validate UnionCommon {:x "kikka"})
+; => true
+(m/validate UnionCommon {:x 1})
+; => true
+```
+
+
 ## Persisting schemas
 
 Writing and Reading schemas as [EDN](https://github.com/edn-format/edn), no `eval` needed.
 
-Following example requires [sci](https://github.com/borkdude/sci) as external dependency because it includes a function definition. See [Serializable functions](#serializable-functions).
+Following example requires [SCI](https://github.com/babashka/sci) or
+[cherry](https://github.com/squint-cljs/cherry) as external dependency because
+it includes a (quoted) function definition. See [Serializable
+functions](#serializable-functions).
 
 ```clojure
 (require '[malli.edn :as edn])
@@ -1623,6 +1788,11 @@ Schemas can be used to generate values:
   [:re #"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,63}$"]
   {:seed 42, :size 10})
 ; => "CaR@MavCk70OHiX.yZ"
+
+;; :gen/return (note, not validated)
+(mg/generate
+ [:and {:gen/return 42} :int])
+; => 42
 
 ;; :gen/elements (note, are not validated)
 (mg/generate
@@ -1852,8 +2022,8 @@ Adding custom decoding via `::mp/value-decoders` option:
    :time "2021-01-01T00:00:00Z"}
   {:id "8aadbf5e-5fe3-11ec-bf63-0242ac130002"
    :time "2022-01-01T00:00:00Z"}]
- {::mp/value-decoders {'string? {:uuid mt/-string->uuid
-                                 'inst? mt/-string->date}}})
+ {::mp/value-decoders {:string {:uuid mt/-string->uuid
+                                'inst? mt/-string->date}}})
 ; => [:map [:id :uuid] [:time inst?]
 ```
 
@@ -2017,10 +2187,10 @@ The inverse of parsing, using `m/unparse` and `m/unparser`:
 
 ## Serializable functions
 
-Enabling serializable function schemas requires [sci](https://github.com/borkdude/sci) as external dependency. If
+Enabling serializable function schemas requires [SCI](https://github.com/borkdude/sci) or [cherry](https://github.com/squint-cljs/cherry) (for client side) as external dependency. If
 it is not present, the malli function evaluator throws `:sci-not-available` exception.
 
-For ClojureScript, you also need to require `sci.core` manually, either directly or via [`:preloads`](https://clojurescript.org/reference/compiler-options#preloads).
+For ClojureScript, you need to require `sci.core` or `malli.cherry` manually.
 
 For GraalVM, you need to require `sci.core` manually, before requiring any malli namespaces.
 
@@ -2330,7 +2500,7 @@ You can also build content-dependent schemas by using a callback function `:comp
                {:pred #(and (int? %) (>= min % max))
                 :min 2 ;; at least 1 child
                 :max 2 ;; at most 1 child
-                :type-properties {:error/fn (fn [error _] (str "should be betweeb " min " and " max ", was " (:value error)))
+                :type-properties {:error/fn (fn [error _] (str "should be between " min " and " max ", was " (:value error)))
                                   :decode/string mt/-string->long
                                   :json-schema {:type "integer"
                                                 :format "int64"
@@ -2344,7 +2514,7 @@ You can also build content-dependent schemas by using a callback function `:comp
 (-> [Between 10 20]
     (m/explain 8)
     (me/humanize))
-; => ["should be betweeb 10 and 20, was 8"]
+; => ["should be between 10 and 20, was 8"]
 
 (mg/sample [Between -10 10])
 ; => (-1 0 -2 -4 -4 0 -2 7 1 0)
@@ -2490,6 +2660,30 @@ Just a `Map`.
   [:map [:maybe [:maybe :string]]]
   {:maybe "sheep"})
 ; => true
+```
+### Var registry
+
+Var is a valid reference type in Malli. To support auto-resolving Var references to Vars, `mr/var-registry` is needed. It is enabled by default.
+
+```clojure
+(def UserId :string)
+
+(def User
+  [:map
+   [:id #'UserId]
+   [:friends {:optional true} [:set [:ref #'User]]]])
+
+(mg/sample User {:seed 0})
+;({:id ""}
+; {:id "6", :friends #{{:id ""}}}
+; {:id ""}
+; {:id "4", :friends #{}}
+; {:id "24b7"}
+; {:id "Uo"}
+; {:id "8"}
+; {:id "z5b"}
+; {:id "R9f"}
+; {:id "lUm6Wj9gR"})
 ```
 
 ### Mutable registry
@@ -2999,6 +3193,7 @@ The following schemas and their respective types are provided:
 | Schema                   | Example                                              | JVM/js-joda Type (`java.time`) |
 |:-------------------------|:-----------------------------------------------------|:-------------------------------|
 | `:time/duration`         | PT0.01S                                              | `Duration`                     |
+| `:time/period`           | P-1Y100D                                             | `Period`                       |
 | `:time/instant`          | 2022-12-18T12:00:25.840823567Z                       | `Instant`                      |
 | `:time/local-date`       | 2020-01-01                                           | `LocalDate`                    |
 | `:time/local-date-time`  | 2020-01-01T12:00:00                                  | `LocalDateTime`                |
@@ -3028,6 +3223,21 @@ To use these schemas in ClojureScript you will need to install the npm packages 
 npm install @js-joda/core @js-joda/timezone
 ```
 
+Because historical timezone data can add ~500kb to your ClojureScript build malli does not require the `@js-joda/timezone`
+package directly. You must require timezone data before requiring the `malli.experimental.time` namespace if you want
+to make use of zone related time objects.
+
+For example, to include only timezone data for +/- 5 years from the time the library was released, use:
+
+```clojure
+(ns com.my-co.my-app
+  (:require ["@js-joda/timezone/dist/js-joda-timezone-10-year-range"]))
+```
+
+For more info see:
+
+https://github.com/js-joda/js-joda/tree/main/packages/timezone
+
 #### min/max
 
 Time schemas respect min/max predicates for their respective types:
@@ -3039,6 +3249,13 @@ Time schemas respect min/max predicates for their respective types:
 ```
 
 Will be valid only for local times between 12:00 and 13:00.
+
+For the comparison of `Period`s, units are compared to corresponding units and never between.
+
+For example a Period of 1 year will always compare greater than a period of 13 months; that is, conceptually `(< P13M P1Y)`
+
+If you want to add further constraints you can transform your `Period`s before being used in `min` and `max` per your use-case
+or combine the schema with `:and` and `:fn` for example.
 
 #### Transformation - `malli.experimental.time.transform`
 
@@ -3064,6 +3281,15 @@ Formats can be configured by providing a `formatter` or a `pattern` property
 Require `malli.experimental.time.generator` to add support for time schema generators.
 
 Generated data also respects min/max properties.
+
+When generating `Period`s there is no way distinguish between `nil` values and zero for each unit, so zero units will
+not constrain the generator, if you need some of the units to be zero in generated `Period`s you can always `gen/fmap` the data:
+
+```clojure
+[:time/period {:gen/fmap #(. % withMonths 0) :min (. Period of -10 0 1)}]
+```
+This would generate `Period`s with a minimum years unit of -10, minimum days unit of 1 and months unit always equal to zero.
+Without the fmap the months unit could be any negative or positive integer.
 
 #### JSON Schema - `malli.experimental.time.json-schema`
 
@@ -3166,6 +3392,9 @@ npx shadow-cljs run shadow.cljs.build-report app /tmp/report.html
 
 # with sci
 npx shadow-cljs run shadow.cljs.build-report app-sci /tmp/report.html
+
+# with cherry
+npx shadow-cljs run shadow.cljs.build-report app-cherry /tmp/report.html
 ```
 
 With minimal registry (2.4KB+ Gzipped)
@@ -3176,6 +3405,9 @@ npx shadow-cljs run shadow.cljs.build-report app2 /tmp/report.html
 
 # with sci
 npx shadow-cljs run shadow.cljs.build-report app2-sci /tmp/report.html
+
+# with cherry
+npx shadow-cljs run shadow.cljs.build-report app2-cherry /tmp/report.html
 ```
 
 ## Formatting the code
@@ -3245,6 +3477,7 @@ or directly in a babashka script:
 - [malli-cli](https://github.com/piotr-yuxuan/malli-cli) - Command-line processing
 - [malapropism](https://github.com/dpassen/malapropism) - malli-backed configuration library
 - [muotti](https://github.com/esuomi/muotti) - a graph based value transformer library with malli-support
+- [malli-select](https://github.com/eval/malli-select) - spec2 selection for Malli (for when you only need part of the herd 🐑)
 
 ## License
 
